@@ -562,8 +562,9 @@ def load_brand_kit(kit_name):
 if 'loaded_kit' not in st.session_state:
     st.session_state['loaded_kit'] = {}
 
-# -- تحميل الإعدادات من st.secrets --
-TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_VIDEO_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "") 
+# >> تم التغيير <<: قراءة التوكن الجديد الخاص بالصور
+TELEGRAM_IMAGE_BOT_TOKEN = st.secrets.get("TELEGRAM_imege_TOKEN", "") 
 TELEGRAM_CHANNELS = st.secrets.get("telegram_channels", {})
 
 # -- إنشاء التبويبات الرئيسية --
@@ -737,7 +738,8 @@ with video_tab:
                                 caption=[f"<b>{article_data['title']}</b>",""]
                                 if url: caption.append(f"🔗 <b>المصدر:</b> {url}")
                                 
-                                success = send_to_telegram(video_file, caption, TELEGRAM_BOT_TOKEN, target_channel_id_vid, is_photo=False)
+                                # >> تم التغيير <<: استخدام المتغير الخاص ببوت الفيديو
+                                success = send_to_telegram(video_file, caption, TELEGRAM_VIDEO_BOT_TOKEN, target_channel_id_vid, is_photo=False)
                                 if success: st.success(f"✅ تم نشر الفيديو [{i+1}/{total_urls}] بنجاح!")
                                 else: st.error(f"!! [{i+1}/{total_urls}] فشل النشر.")
                                 
@@ -855,7 +857,8 @@ with image_tab:
                     if hashtag_img: caption_parts.extend(["", hashtag_img])
                     final_caption = "\n".join(caption_parts)
                     
-                    success = send_to_telegram(output_path, final_caption, TELEGRAM_BOT_TOKEN, target_channel_id_img, is_photo=True)
+                    # >> تم التغيير <<: استخدام المتغير الجديد الخاص ببوت الصور
+                    success = send_to_telegram(output_path, final_caption, TELEGRAM_IMAGE_BOT_TOKEN, target_channel_id_img, is_photo=True)
                     if success:
                         st.success("✅ تم نشر الصورة بنجاح!")
                     else:
