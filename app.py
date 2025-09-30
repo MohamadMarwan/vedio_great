@@ -812,7 +812,28 @@ with image_tab:
     if st.button("🖼️ **إنشاء ونشر الصورة**", type="primary", use_container_width=True, key="generate_image_button"):
         final_news_title = news_title_img
         
-        if article_url_img and (not final_news_title or (image_source == "السحب من رابط المقال" and not bg_image_path)):
+        # منطق جديد وأبسط
+        scraped_data = None
+        if article_url_img:
+           with st.spinner("جاري سحب البيانات من الرابط..."):
+            scraped_data = scrape_article_data(article_url_img)
+           if scraped_data:
+            st.success("✅ تم سحب البيانات بنجاح.")
+            # إذا لم يكن المستخدم قد كتب عنوانًا، استخدم العنوان المسحوب
+            if not final_news_title: 
+                final_news_title = scraped_data['title']
+            # إذا اختار المستخدم السحب من الرابط ولم يكن قد رفع صورة بالفعل
+            if image_source == "السحب من رابط المقال" and not bg_image_path:
+                if scraped_data['image_urls']:
+                    downloaded = download_images([scraped_data['image_urls'][0]])
+                    if downloaded: 
+                        bg_image_path = downloaded[0]
+                else:
+                    st.warning("لم يتم العثور على صورة في الرابط.")
+        else:
+            st.error("فشل في سحب البيانات من الرابط.")
+
+
             with st.spinner("جاري سحب البيانات من الرابط..."):
                 scraped_data = scrape_article_data(article_url_img)
                 if scraped_data:
