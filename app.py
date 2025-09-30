@@ -1,6 +1,7 @@
 # ==============================================================================
-#     منصة إنتاج المحتوى الإخباري (الإصدار 12.2 - مصحح الأخطاء)
-#     - إعادة إضافة الدوال المفقودة وتصحيح المتغيرات العامة
+#     منصة إنتاج المحتوى الإخباري (الإصدار 12.3 - النسخة الكاملة والمصححة)
+#     - إعادة إضافة جميع الدوال المفقودة.
+#     - تأكيد دعم الكتابة من اليمين لليسار (RTL) داخل التصاميم.
 # ==============================================================================
 import os
 import random
@@ -24,7 +25,7 @@ import shutil
 # ==============================================================================
 st.set_page_config(page_title="منصة إنتاج المحتوى الإخباري", layout="wide", initial_sidebar_state="expanded")
 st.title("🚀 منصة إنتاج المحتوى الإخباري المتكاملة")
-st.markdown("v12.2 - إنتاج الفيديو والصور | قوالب متعددة | نشر مخصص")
+st.markdown("v12.3 - إنتاج الفيديو والصور | دعم كامل للغة العربية (RTL)")
 
 # إنشاء مجلدات ضرورية
 if not os.path.exists("uploads"): os.makedirs("uploads")
@@ -35,16 +36,20 @@ if not os.path.exists("brand_kits"): os.makedirs("brand_kits")
 #                             الدوال المساعدة العامة
 # ==============================================================================
 def ease_in_out_quad(t): return 2*t*t if t<0.5 else 1-pow(-2*t+2,2)/2
-def process_text(text): return get_display(arabic_reshaper.reshape(text))
+
+def process_text(text):
+    reshaped_text = arabic_reshaper.reshape(text)
+    return get_display(reshaped_text)
+
 def draw_text(draw, pos, text, font, fill, shadow_color, offset=(2,2)):
-    proc_text=process_text(text)
+    proc_text = process_text(text)
     draw.text((pos[0]+offset[0],pos[1]+offset[1]),proc_text,font=font,fill=shadow_color)
     draw.text(pos,proc_text,font=font,fill=fill)
 
 def save_uploaded_file(uploaded_file, folder="uploads"):
     if uploaded_file is not None:
-        path = os.path.join(folder, uploaded_file.name);
-        with open(path, "wb") as f: f.write(uploaded_file.getbuffer());
+        path = os.path.join(folder, uploaded_file.name)
+        with open(path, "wb") as f: f.write(uploaded_file.getbuffer())
         return path
     return None
 
@@ -69,7 +74,6 @@ def generate_tts_audio(text, lang='ar', tld='com'):
     except Exception as e:
         st.error(f"!! فشل في إنشاء التعليق الصوتي: {e}"); return None
 
-# >> تمت إعادة إضافتها <<: دالة رسم النص كلمة بكلمة للفيديو
 def draw_text_word_by_word(draw, box_coords, lines, words_to_show, font, fill, shadow):
     x, y, w, h = box_coords; line_height = font.getbbox("ا")[3] + 20
     total_text_height = len(lines) * line_height; current_y = y + (h - total_text_height) / 2
@@ -80,15 +84,15 @@ def draw_text_word_by_word(draw, box_coords, lines, words_to_show, font, fill, s
             if words_shown < words_to_show: words_to_draw_in_line.append(word); words_shown += 1
             else: break
         if words_to_draw_in_line:
-            partial_line = " ".join(words_to_draw_in_line); processed_partial_line = process_text(partial_line)
+            partial_line = " ".join(words_to_draw_in_line)
+            # Alignment for RTL: We use the processed text to get the correct width
+            processed_partial_line = process_text(partial_line)
             line_width = font.getbbox(processed_partial_line)[2]
+            # Draw original text but align using processed width
             draw_text(draw, (x + w - line_width, current_y), partial_line, font, fill, shadow)
         current_y += line_height
         if words_shown >= words_to_show: break
 
-# ==============================================================================
-# دوال مساعدة خاصة بتصميم الصور
-# ==============================================================================
 def draw_text_with_shadow_image(draw, position, text, font, fill_color, shadow_color, shadow_offset=3):
     x, y = position
     processed_text = process_text(text)
@@ -102,8 +106,7 @@ def create_base_image_design(background_image_path, W=1080, H=1080, logo_path="l
         elif logo_path and os.path.exists(logo_path):
             logo_img = Image.open(logo_path).convert("RGB")
             base_image = logo_img.resize((W, H)).filter(ImageFilter.GaussianBlur(20))
-        else:
-            raise FileNotFoundError
+        else: raise FileNotFoundError
     except (FileNotFoundError, IOError):
         base_image = Image.new('RGB', (W, H), (15, 15, 15))
     
@@ -124,17 +127,78 @@ def draw_footer_image(draw_or_img, W, H, logo_path, footer_text, font_path):
         total_width = text_bbox[2] + logo.width + 15
         start_x = (W - total_width) / 2; text_y = H - 45
         logo_x = int(start_x + text_bbox[2] + 15); logo_y = H - 70
-
-        if isinstance(draw_or_img, Image.Image):
-             final_image = draw_or_img; draw_context = ImageDraw.Draw(final_image, 'RGBA')
-        else: final_image = draw_or_img.im; draw_context = draw_or_img
-        
+        final_image = draw_or_img if isinstance(draw_or_img, Image.Image) else draw_or_img.im
+        draw_context = ImageDraw.Draw(final_image, 'RGBA')
         draw_context.text((start_x, text_y), footer_text_proc, font=footer_font, fill="#CCCCCC", anchor="ls")
         final_image.paste(logo, (logo_x, logo_y), logo)
     except (FileNotFoundError, IOError):
         footer_font = ImageFont.truetype(font_path, 35)
         draw = ImageDraw.Draw(draw_or_img) if isinstance(draw_or_img, Image.Image) else draw_or_img
         draw.text((W/2, H-40), process_text(footer_text), font=footer_font, fill="#CCCCCC", anchor="mm")
+
+# ==============================================================================
+#                      دوال سحب البيانات والنشر
+# ==============================================================================
+@st.cache_data(ttl=600, show_spinner=False)
+def scrape_article_data(url):
+    try:
+        headers={'User-Agent':'Mozilla/5.0'}; res=requests.get(url,headers=headers,timeout=15); res.raise_for_status()
+        soup=BeautifulSoup(res.content,'html.parser')
+        title_tag=soup.find('h1') or soup.find('meta',property='og:title')
+        title=title_tag.get_text(strip=True) if hasattr(title_tag,'get_text') else title_tag.get('content','')
+        content_div=soup.find('div',class_='entry-content') or soup.find('article')
+        content=" ".join([p.get_text(strip=True) for p in (content_div or soup).find_all('p')])
+        image_urls=set()
+        og_image=soup.find('meta',property='og:image')
+        if og_image: image_urls.add(og_image['content'])
+        for img_tag in (content_div or soup).find_all('img',limit=5):
+            src=img_tag.get('src') or img_tag.get('data-src')
+            if src and src.startswith('http'): image_urls.add(src)
+        return {'title':title,'content':content,'image_urls':list(image_urls)}
+    except Exception:
+        return None
+
+def download_images(urls):
+    paths=[]
+    for i,url in enumerate(urls[:4]):
+        try:
+            res=requests.get(url,stream=True,timeout=15); res.raise_for_status()
+            parsed_url = urlparse(url)
+            filename = os.path.basename(parsed_url.path) or f"temp_img_{random.randint(1000,9999)}.jpg"
+            path=os.path.join("temp_media", filename)
+            with open(path,'wb') as f: f.write(res.content)
+            paths.append(path)
+        except Exception:
+            pass
+    return paths
+
+def send_to_telegram(file_path, caption, token, channel_id, is_photo, thumb_path=None):
+    try:
+        bot_url = f"https://api.telegram.org/bot{token}/"
+        endpoint = "sendPhoto" if is_photo else "sendVideo"
+        url = bot_url + endpoint
+        
+        with open(file_path, 'rb') as file:
+            files = {'photo': file} if is_photo else {'video': file}
+            payload = {'chat_id': channel_id, 'caption': caption, 'parse_mode': 'HTML'}
+            if not is_photo:
+                payload['supports_streaming'] = True
+                if thumb_path and os.path.exists(thumb_path):
+                    with open(thumb_path, 'rb') as thumb_file:
+                        files['thumb'] = thumb_file
+                        response = requests.post(url, data=payload, files=files, timeout=1800)
+                else:
+                    response = requests.post(url, data=payload, files=files, timeout=1800)
+            else:
+                 response = requests.post(url, data=payload, files=files, timeout=1800)
+
+            if response.status_code == 200:
+                return True
+            else:
+                st.error(f"!! فشل النشر: {response.status_code} - {response.text}")
+                return False
+    except requests.exceptions.RequestException as e:
+        st.error(f"!! خطأ فادح أثناء الاتصال بتليجرام: {e}"); return False
 
 # ==============================================================================
 # دوال تصاميم الصور
@@ -250,69 +314,6 @@ def design_arab(title, settings):
 # ==============================================================================
 #                      دوال إنتاج الفيديو
 # ==============================================================================
-@st.cache_data(ttl=600, show_spinner=False)
-def scrape_article_data(url):
-    try:
-        headers={'User-Agent':'Mozilla/5.0'}; res=requests.get(url,headers=headers,timeout=15); res.raise_for_status()
-        soup=BeautifulSoup(res.content,'html.parser')
-        title_tag=soup.find('h1') or soup.find('meta',property='og:title')
-        title=title_tag.get_text(strip=True) if hasattr(title_tag,'get_text') else title_tag.get('content','')
-        content_div=soup.find('div',class_='entry-content') or soup.find('article')
-        content=" ".join([p.get_text(strip=True) for p in (content_div or soup).find_all('p')])
-        image_urls=set()
-        og_image=soup.find('meta',property='og:image')
-        if og_image: image_urls.add(og_image['content'])
-        for img_tag in (content_div or soup).find_all('img',limit=5):
-            src=img_tag.get('src') or img_tag.get('data-src')
-            if src and src.startswith('http'): image_urls.add(src)
-        return {'title':title,'content':content,'image_urls':list(image_urls)}
-    except Exception:
-        return None
-
-def download_images(urls):
-    paths=[]
-    for i,url in enumerate(urls[:4]):
-        try:
-            res=requests.get(url,stream=True,timeout=15); res.raise_for_status()
-            parsed_url = urlparse(url)
-            filename = os.path.basename(parsed_url.path) or f"temp_img_{random.randint(1000,9999)}.jpg"
-            path=os.path.join("temp_media", filename)
-            with open(path,'wb') as f: f.write(res.content)
-            paths.append(path)
-        except Exception:
-            pass
-    return paths
-
-def send_to_telegram(file_path, caption, token, channel_id, is_photo):
-    try:
-        bot_url = f"https://api.telegram.org/bot{token}/"
-        endpoint = "sendPhoto" if is_photo else "sendVideo"
-        url = bot_url + endpoint
-        
-        with open(file_path, 'rb') as file:
-            files = {'photo': file} if is_photo else {'video': file}
-            payload = {'chat_id': channel_id, 'caption': caption, 'parse_mode': 'HTML'}
-            if not is_photo:
-                payload['supports_streaming'] = True
-                # For videos, we send the thumbnail as well
-                thumb_path = file_path.replace(".mp4", ".jpg")
-                if os.path.exists(thumb_path):
-                    with open(thumb_path, 'rb') as thumb_file:
-                        files['thumb'] = thumb_file
-                        response = requests.post(url, data=payload, files=files, timeout=1800)
-                else:
-                    response = requests.post(url, data=payload, files=files, timeout=1800)
-            else:
-                 response = requests.post(url, data=payload, files=files, timeout=1800)
-
-            if response.status_code == 200:
-                return True
-            else:
-                st.error(f"!! فشل النشر: {response.status_code} - {response.text}")
-                return False
-    except requests.exceptions.RequestException as e:
-        st.error(f"!! خطأ فادح أثناء الاتصال بتليجرام: {e}"); return False
-
 def fit_image_to_frame_video(img, target_w, target_h, frame_idx, total_frames):
     img_w, img_h = img.size; target_aspect = target_w / target_h; img_aspect = img_w / img_h
     if img_aspect > target_aspect: new_h = target_h; new_w = int(new_h * img_aspect)
@@ -562,8 +563,8 @@ def load_brand_kit(kit_name):
 if 'loaded_kit' not in st.session_state:
     st.session_state['loaded_kit'] = {}
 
+# -- تحميل الإعدادات من st.secrets --
 TELEGRAM_VIDEO_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", "") 
-# >> تم التغيير <<: قراءة التوكن الجديد الخاص بالصور
 TELEGRAM_IMAGE_BOT_TOKEN = st.secrets.get("TELEGRAM_imege_TOKEN", "") 
 TELEGRAM_CHANNELS = st.secrets.get("telegram_channels", {})
 
@@ -593,7 +594,6 @@ with brand_tab:
         new_kit_name = st.text_input("أدخل اسمًا لمجموعتك الجديدة:")
         st.warning("الحفظ يأخذ الإعدادات من تبويب 'إنتاج الفيديو'")
         if st.button("💾 حفظ المجموعة الحالية"):
-            # We need to get the paths of the currently uploaded files for the video tab
             temp_logo_path = save_uploaded_file(st.session_state.get('logo_file_uploader_state'), "temp_media")
             temp_font_path = save_uploaded_file(st.session_state.get('font_file_uploader_state'), "temp_media")
             temp_intro_path = save_uploaded_file(st.session_state.get('intro_video_uploader_state'), "temp_media")
@@ -613,7 +613,6 @@ with video_tab:
     video_sidebar_placeholder = st.sidebar.container()
     video_main_placeholder = st.container()
     
-    # >> تم التصحيح <<: تعريف المتغير dimensions في مكان عام
     aspect_ratio_option = video_sidebar_placeholder.selectbox("اختر أبعاد الفيديو:", ("16:9 (أفقي)", "9:16 (عمودي)"), key="aspect_ratio")
     dimensions = (1920, 1080) if "16:9" in aspect_ratio_option else (1080, 1920)
 
@@ -697,64 +696,66 @@ with video_tab:
                     status_container = st.container()
                     target_channel_id_vid = TELEGRAM_CHANNELS.get(selected_channel_name_vid)
 
-                    for i, url in enumerate(urls):
-                        current_status = status_container.empty()
-                        with current_status.container():
-                            st.info(f"⏳ [{i+1}/{total_urls}] جاري تحليل الرابط: {url[:70]}...")
-                            scraped_data = scrape_article_data(url)
-                            if not scraped_data:
-                                st.error(f"!! [{i+1}/{total_urls}] فشل تحليل الرابط. الانتقال للتالي..."); time.sleep(3); continue
+                    if not target_channel_id_vid:
+                        st.error("خطأ: لم يتم تحديد قناة للنشر. يرجى مراجعة إعداداتك.")
+                    else:
+                        for i, url in enumerate(urls):
+                            current_status = status_container.empty()
+                            with current_status.container():
+                                st.info(f"⏳ [{i+1}/{total_urls}] جاري تحليل الرابط: {url[:70]}...")
+                                scraped_data = scrape_article_data(url)
+                                if not scraped_data:
+                                    st.error(f"!! [{i+1}/{total_urls}] فشل تحليل الرابط. الانتقال للتالي..."); time.sleep(3); continue
 
-                            article_data = scraped_data
-                            manual_image_paths_vid = [save_uploaded_file(img, "temp_media") for img in manual_images_uploaded_vid]
-                            image_paths = download_images(article_data.get('image_urls', []))
-                            image_paths.extend(manual_image_paths_vid)
-                            image_paths = sorted(set(image_paths), key=image_paths.index)
+                                article_data = scraped_data
+                                manual_image_paths_vid = [save_uploaded_file(img, "temp_media") for img in manual_images_uploaded_vid]
+                                image_paths = download_images(article_data.get('image_urls', []))
+                                image_paths.extend(manual_image_paths_vid)
+                                image_paths = sorted(set(image_paths), key=image_paths.index)
 
-                            if not image_paths:
-                                if logo_file_path and os.path.exists(logo_file_path): image_paths = [logo_file_path]
-                                else: st.error(f"!! [{i+1}/{total_urls}] لا توجد صور. الانتقال للتالي..."); time.sleep(3); continue
+                                if not image_paths:
+                                    if logo_file_path and os.path.exists(logo_file_path): image_paths = [logo_file_path]
+                                    else: st.error(f"!! [{i+1}/{total_urls}] لا توجد صور. الانتقال للتالي..."); time.sleep(3); continue
 
-                            settings = {
-                                'dimensions': dimensions, 'tts_audio_path': None, 'tts_volume': tts_volume_vid, 'logo_file': logo_file_path,
-                                'font_file': FONT_FILE, 'intro_video': intro_video_path, 'outro_video': outro_video_path,
-                                'music_files': [save_uploaded_file(f) for f in music_files_uploaded_vid], 'sfx_file': save_uploaded_file(sfx_file_uploaded_vid),
-                                'design_choice': design_choice_vid, 'cat': final_cat_vid, 'text_color': text_color_vid, 'shadow_color': shadow_color_vid,
-                                'max_video_duration': max_video_duration, 'min_scene_duration': min_scene_duration, 'intro_duration': intro_duration, 'outro_duration': outro_duration,
-                                'font_size': font_size, 'logo_size': logo_size_outro, 'music_volume': music_volume, 'sfx_volume': sfx_volume,
-                                'enable_outro': enable_outro, 'pacing_multiplier': pacing_multiplier,
-                            }
+                                settings = {
+                                    'dimensions': dimensions, 'tts_audio_path': None, 'tts_volume': tts_volume_vid, 'logo_file': logo_file_path,
+                                    'font_file': FONT_FILE, 'intro_video': intro_video_path, 'outro_video': outro_video_path,
+                                    'music_files': [save_uploaded_file(f) for f in music_files_uploaded_vid], 'sfx_file': save_uploaded_file(sfx_file_uploaded_vid),
+                                    'design_choice': design_choice_vid, 'cat': final_cat_vid, 'text_color': text_color_vid, 'shadow_color': shadow_color_vid,
+                                    'max_video_duration': max_video_duration, 'min_scene_duration': min_scene_duration, 'intro_duration': intro_duration, 'outro_duration': outro_duration,
+                                    'font_size': font_size, 'logo_size': logo_size_outro, 'music_volume': music_volume, 'sfx_volume': sfx_volume,
+                                    'enable_outro': enable_outro, 'pacing_multiplier': pacing_multiplier,
+                                }
 
-                            if enable_tts_vid and article_data:
-                                st.text("⏳ جاري إنشاء التعليق الصوتي...")
-                                full_text_for_tts = article_data['title'] + ". " + article_data.get('content', '')
-                                tts_audio_path = generate_tts_audio(full_text_for_tts, tld=tts_tld_vid)
-                                if tts_audio_path: settings['tts_audio_path'] = tts_audio_path
-                            
-                            video_file, thumb_file = create_story_video(article_data, image_paths, settings, st)
-                            
-                            if video_file and thumb_file:
-                                st.text("📤 جاري نشر الفيديو إلى تليجرام...")
-                                caption=[f"<b>{article_data['title']}</b>",""]
-                                if url: caption.append(f"🔗 <b>المصدر:</b> {url}")
+                                if enable_tts_vid and article_data:
+                                    st.text("⏳ جاري إنشاء التعليق الصوتي...")
+                                    full_text_for_tts = article_data['title'] + ". " + article_data.get('content', '')
+                                    tts_audio_path = generate_tts_audio(full_text_for_tts, tld=tts_tld_vid)
+                                    if tts_audio_path: settings['tts_audio_path'] = tts_audio_path
                                 
-                                # >> تم التغيير <<: استخدام المتغير الخاص ببوت الفيديو
-                                success = send_to_telegram(video_file, caption, TELEGRAM_VIDEO_BOT_TOKEN, target_channel_id_vid, is_photo=False)
-                                if success: st.success(f"✅ تم نشر الفيديو [{i+1}/{total_urls}] بنجاح!")
-                                else: st.error(f"!! [{i+1}/{total_urls}] فشل النشر.")
+                                video_file, thumb_file = create_story_video(article_data, image_paths, settings, st)
                                 
-                                for f in [video_file, thumb_file] + image_paths:
-                                     if f and os.path.exists(f) and ('brand_kits' not in f and 'uploads' not in f):
-                                        try: os.remove(f)
-                                        except OSError: pass
-                            else: st.error(f"❌ [{i+1}/{total_urls}] فشلت عملية إنشاء الفيديو.")
-                            
-                            batch_progress.progress((i + 1) / total_urls, text=f"اكتمل {i+1} من {total_urls}")
-                            if i < total_urls - 1:
-                                for j in range(delay_between_posts, 0, -1):
-                                    st.info(f"⏱️ الانتظار لمدة {j} ثانية قبل الفيديو التالي..."); time.sleep(1)
-                
-                status_container.success("🎉 اكتملت جميع مهام المعالجة المجمعة للفيديو بنجاح!")
+                                if video_file and thumb_file:
+                                    st.text("📤 جاري نشر الفيديو إلى تليجرام...")
+                                    caption=[f"<b>{article_data['title']}</b>",""]
+                                    if url: caption.append(f"🔗 <b>المصدر:</b> {url}")
+                                    
+                                    success = send_to_telegram(video_file, caption, TELEGRAM_VIDEO_BOT_TOKEN, target_channel_id_vid, is_photo=False, thumb_path=thumb_file)
+                                    if success: st.success(f"✅ تم نشر الفيديو [{i+1}/{total_urls}] بنجاح!")
+                                    else: st.error(f"!! [{i+1}/{total_urls}] فشل النشر.")
+                                    
+                                    for f in [video_file, thumb_file] + image_paths:
+                                         if f and os.path.exists(f) and ('brand_kits' not in f and 'uploads' not in f):
+                                            try: os.remove(f)
+                                            except OSError: pass
+                                else: st.error(f"❌ [{i+1}/{total_urls}] فشلت عملية إنشاء الفيديو.")
+                                
+                                batch_progress.progress((i + 1) / total_urls, text=f"اكتمل {i+1} من {total_urls}")
+                                if i < total_urls - 1:
+                                    for j in range(delay_between_posts, 0, -1):
+                                        st.info(f"⏱️ الانتظار لمدة {j} ثانية قبل الفيديو التالي..."); time.sleep(1)
+                    
+                    status_container.success("🎉 اكتملت جميع مهام المعالجة المجمعة للفيديو بنجاح!")
 
 # ========================== تبويب تصميم الصور ==========================
 with image_tab:
@@ -765,10 +766,10 @@ with image_tab:
     with col1_img:
         st.subheader("1. المحتوى")
         news_title_img = st.text_area("✍️ أدخل نص الخبر", height=150, key="img_news_title")
-        article_url_img = st.text_input("🔗 أو اسحب العنوان من رابط", help="إذا تم توفير رابط، سيتم سحب العنوان والصورة الرئيسية منه تلقائيًا.", key="img_article_url")
+        article_url_img = st.text_input("🔗 أو اسحب العنوان/الصورة من رابط", key="img_article_url")
         
         st.subheader("2. الصورة")
-        image_source = st.radio("اختر مصدر الصورة:", ("رفع صورة", "استخدام رابط صورة", "السحب من رابط المقال (افتراضي)"), key="img_source")
+        image_source = st.radio("اختر مصدر الصورة:", ("السحب من رابط المقال (افتراضي)", "رفع صورة", "استخدام رابط صورة"), key="img_source", horizontal=True)
         
         bg_image_path = None
         if image_source == "رفع صورة":
@@ -812,36 +813,21 @@ with image_tab:
     if st.button("🖼️ **إنشاء ونشر الصورة**", type="primary", use_container_width=True, key="generate_image_button"):
         final_news_title = news_title_img
         
-        # منطق جديد وأبسط
         scraped_data = None
         if article_url_img:
-           with st.spinner("جاري سحب البيانات من الرابط..."):
-            scraped_data = scrape_article_data(article_url_img)
-           if scraped_data:
-            st.success("✅ تم سحب البيانات بنجاح.")
-            # إذا لم يكن المستخدم قد كتب عنوانًا، استخدم العنوان المسحوب
-            if not final_news_title: 
-                final_news_title = scraped_data['title']
-            # إذا اختار المستخدم السحب من الرابط ولم يكن قد رفع صورة بالفعل
-            if image_source == "السحب من رابط المقال" and not bg_image_path:
-                if scraped_data['image_urls']:
-                    downloaded = download_images([scraped_data['image_urls'][0]])
-                    if downloaded: 
-                        bg_image_path = downloaded[0]
-                else:
-                    st.warning("لم يتم العثور على صورة في الرابط.")
-        else:
-            st.error("فشل في سحب البيانات من الرابط.")
-
-
             with st.spinner("جاري سحب البيانات من الرابط..."):
                 scraped_data = scrape_article_data(article_url_img)
                 if scraped_data:
-                    if not final_news_title: final_news_title = scraped_data['title']
-                    if image_source == "السحب من رابط المقال" and not bg_image_path and scraped_data['image_urls']:
-                        downloaded = download_images([scraped_data['image_urls'][0]])
-                        if downloaded: bg_image_path = downloaded[0]
                     st.success("✅ تم سحب البيانات بنجاح.")
+                    if not final_news_title: 
+                        final_news_title = scraped_data['title']
+                    if image_source == "السحب من رابط المقال (افتراضي)" and not bg_image_path:
+                        if scraped_data.get('image_urls'):
+                            downloaded = download_images([scraped_data['image_urls'][0]])
+                            if downloaded: 
+                                bg_image_path = downloaded[0]
+                        else:
+                            st.warning("لم يتم العثور على صورة في الرابط.")
                 else:
                     st.error("فشل في سحب البيانات من الرابط.")
 
@@ -851,6 +837,9 @@ with image_tab:
             with st.spinner("جاري إنشاء التصميم..."):
                 font_path_img = st.session_state.loaded_kit.get('font_path', "Amiri-Bold.ttf")
                 logo_path_img = st.session_state.loaded_kit.get('logo_path', "logo.png")
+                
+                if not os.path.exists(font_path_img):
+                    st.error(f"ملف الخط '{font_path_img}' غير موجود!"); st.stop()
                 
                 hex_color = primary_color.lstrip('#')
                 primary_color_rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
@@ -871,16 +860,18 @@ with image_tab:
                 st.image(final_image, caption="الصورة النهائية", use_column_width=True)
             
             if selected_channel_name_img:
-                with st.spinner("جاري النشر إلى تليجرام..."):
-                    target_channel_id_img = TELEGRAM_CHANNELS[selected_channel_name_img]
-                    caption_parts = [f"<b>{final_news_title}</b>", ""]
-                    if article_url_img: caption_parts.append(f"🔗 <b>التفاصيل:</b> {article_url_img}")
-                    if hashtag_img: caption_parts.extend(["", hashtag_img])
-                    final_caption = "\n".join(caption_parts)
-                    
-                    # >> تم التغيير <<: استخدام المتغير الجديد الخاص ببوت الصور
-                    success = send_to_telegram(output_path, final_caption, TELEGRAM_IMAGE_BOT_TOKEN, target_channel_id_img, is_photo=True)
-                    if success:
-                        st.success("✅ تم نشر الصورة بنجاح!")
-                    else:
-                        st.error("فشل نشر الصورة.")
+                target_channel_id_img = TELEGRAM_CHANNELS.get(selected_channel_name_img)
+                if not target_channel_id_img:
+                    st.error("خطأ: لم يتم تحديد قناة للنشر.")
+                else:
+                    with st.spinner("جاري النشر إلى تليجرام..."):
+                        caption_parts = [f"<b>{final_news_title}</b>", ""]
+                        if article_url_img: caption_parts.append(f"🔗 <b>التفاصيل:</b> {article_url_img}")
+                        if hashtag_img: caption_parts.extend(["", hashtag_img])
+                        final_caption = "\n".join(caption_parts)
+                        
+                        success = send_to_telegram(output_path, final_caption, TELEGRAM_IMAGE_BOT_TOKEN, target_channel_id_img, is_photo=True)
+                        if success:
+                            st.success("✅ تم نشر الصورة بنجاح!")
+                        else:
+                            st.error("فشل نشر الصورة.")
