@@ -1,7 +1,6 @@
 # ==============================================================================
-#     منصة إنتاج المحتوى الإخباري (الإصدار 12.3 - النسخة الكاملة والمصححة)
-#     - إعادة إضافة جميع الدوال المفقودة.
-#     - تأكيد دعم الكتابة من اليمين لليسار (RTL) داخل التصاميم.
+#     منصة إنتاج المحتوى الإخباري (الإصدار 12.4 - إصلاح RTL)
+#     - إصلاح خطأ عرض اللغة العربية (RTL) في قوالب تصميم الصور
 # ==============================================================================
 import os
 import random
@@ -25,7 +24,7 @@ import shutil
 # ==============================================================================
 st.set_page_config(page_title="منصة إنتاج المحتوى الإخباري", layout="wide", initial_sidebar_state="expanded")
 st.title("🚀 منصة إنتاج المحتوى الإخباري المتكاملة")
-st.markdown("v12.3 - إنتاج الفيديو والصور | دعم كامل للغة العربية (RTL)")
+st.markdown("v12.4 - إنتاج الفيديو والصور | دعم كامل للغة العربية (RTL)")
 
 # إنشاء مجلدات ضرورية
 if not os.path.exists("uploads"): os.makedirs("uploads")
@@ -85,10 +84,8 @@ def draw_text_word_by_word(draw, box_coords, lines, words_to_show, font, fill, s
             else: break
         if words_to_draw_in_line:
             partial_line = " ".join(words_to_draw_in_line)
-            # Alignment for RTL: We use the processed text to get the correct width
             processed_partial_line = process_text(partial_line)
             line_width = font.getbbox(processed_partial_line)[2]
-            # Draw original text but align using processed width
             draw_text(draw, (x + w - line_width, current_y), partial_line, font, fill, shadow)
         current_y += line_height
         if words_shown >= words_to_show: break
@@ -109,7 +106,6 @@ def create_base_image_design(background_image_path, W=1080, H=1080, logo_path="l
         else: raise FileNotFoundError
     except (FileNotFoundError, IOError):
         base_image = Image.new('RGB', (W, H), (15, 15, 15))
-    
     w, h = base_image.size
     target_ratio = W / H; img_ratio = w / h
     if img_ratio > target_ratio:
@@ -136,9 +132,6 @@ def draw_footer_image(draw_or_img, W, H, logo_path, footer_text, font_path):
         draw = ImageDraw.Draw(draw_or_img) if isinstance(draw_or_img, Image.Image) else draw_or_img
         draw.text((W/2, H-40), process_text(footer_text), font=footer_font, fill="#CCCCCC", anchor="mm")
 
-# ==============================================================================
-#                      دوال سحب البيانات والنشر
-# ==============================================================================
 @st.cache_data(ttl=600, show_spinner=False)
 def scrape_article_data(url):
     try:
@@ -155,8 +148,7 @@ def scrape_article_data(url):
             src=img_tag.get('src') or img_tag.get('data-src')
             if src and src.startswith('http'): image_urls.add(src)
         return {'title':title,'content':content,'image_urls':list(image_urls)}
-    except Exception:
-        return None
+    except Exception: return None
 
 def download_images(urls):
     paths=[]
@@ -168,8 +160,7 @@ def download_images(urls):
             path=os.path.join("temp_media", filename)
             with open(path,'wb') as f: f.write(res.content)
             paths.append(path)
-        except Exception:
-            pass
+        except Exception: pass
     return paths
 
 def send_to_telegram(file_path, caption, token, channel_id, is_photo, thumb_path=None):
@@ -186,17 +177,12 @@ def send_to_telegram(file_path, caption, token, channel_id, is_photo, thumb_path
                 if thumb_path and os.path.exists(thumb_path):
                     with open(thumb_path, 'rb') as thumb_file:
                         files['thumb'] = thumb_file
-                        response = requests.post(url, data=payload, files=files, timeout=1800)
-                else:
-                    response = requests.post(url, data=payload, files=files, timeout=1800)
+                response = requests.post(url, data=payload, files=files, timeout=1800)
             else:
                  response = requests.post(url, data=payload, files=files, timeout=1800)
 
-            if response.status_code == 200:
-                return True
-            else:
-                st.error(f"!! فشل النشر: {response.status_code} - {response.text}")
-                return False
+            if response.status_code == 200: return True
+            else: st.error(f"!! فشل النشر: {response.status_code} - {response.text}"); return False
     except requests.exceptions.RequestException as e:
         st.error(f"!! خطأ فادح أثناء الاتصال بتليجرام: {e}"); return False
 
@@ -281,6 +267,7 @@ def design_luxury(title, settings):
         total_text_height = sum(line_heights)
         text_y_start = H - plate_height + (plate_height - total_text_height) / 2
         for i, line in enumerate(wrapped_lines):
+            # >> تم التصحيح <<: تم استدعاء process_text هنا
             draw.text((W/2, text_y_start), process_text(line), font=news_font, fill=gold_color, anchor="mm")
             text_y_start += line_heights[i]
     return final_image
@@ -676,12 +663,18 @@ with video_tab:
         st.divider()
         st.subheader("⚙️ إعدادات النشر المجمع")
         delay_between_posts = st.slider("⏳ فترة الانتظار بين كل فيديو (ثانية)", 0, 300, 30)
-        selected_channel_name_vid = st.selectbox("اختر القناة لنشر الفيديو:", list(TELEGRAM_CHANNELS.keys()), key="video_channel_select")
+        if not TELEGRAM_CHANNELS:
+            st.warning("لم يتم تعريف أي قنوات تليجرام في ملف secrets.toml")
+            selected_channel_name_vid = None
+        else:
+            selected_channel_name_vid = st.selectbox("اختر القناة لنشر الفيديو:", list(TELEGRAM_CHANNELS.keys()), key="video_channel_select")
 
         if st.button("🚀 **ابدأ إنتاج الفيديو**", type="primary", use_container_width=True):
             urls = [url.strip() for url in urls_input.split('\n') if url.strip().startswith('http')]
             if not urls:
                 st.error("الرجاء إدخال رابط واحد على الأقل.")
+            elif not selected_channel_name_vid:
+                st.error("الرجاء اختيار قناة للنشر إليها.")
             else:
                 logo_file_path = save_uploaded_file(logo_file_uploaded_vid) or st.session_state.loaded_kit.get('logo_path') or ("logo.png" if os.path.exists("logo.png") else None)
                 FONT_FILE = save_uploaded_file(font_file_uploaded_vid) or st.session_state.loaded_kit.get('font_path') or "Amiri-Bold.ttf"
@@ -696,64 +689,61 @@ with video_tab:
                     status_container = st.container()
                     target_channel_id_vid = TELEGRAM_CHANNELS.get(selected_channel_name_vid)
 
-                    if not target_channel_id_vid:
-                        st.error("خطأ: لم يتم تحديد قناة للنشر. يرجى مراجعة إعداداتك.")
-                    else:
-                        for i, url in enumerate(urls):
-                            current_status = status_container.empty()
-                            with current_status.container():
-                                st.info(f"⏳ [{i+1}/{total_urls}] جاري تحليل الرابط: {url[:70]}...")
-                                scraped_data = scrape_article_data(url)
-                                if not scraped_data:
-                                    st.error(f"!! [{i+1}/{total_urls}] فشل تحليل الرابط. الانتقال للتالي..."); time.sleep(3); continue
+                    for i, url in enumerate(urls):
+                        current_status = status_container.empty()
+                        with current_status.container():
+                            st.info(f"⏳ [{i+1}/{total_urls}] جاري تحليل الرابط: {url[:70]}...")
+                            scraped_data = scrape_article_data(url)
+                            if not scraped_data:
+                                st.error(f"!! [{i+1}/{total_urls}] فشل تحليل الرابط. الانتقال للتالي..."); time.sleep(3); continue
 
-                                article_data = scraped_data
-                                manual_image_paths_vid = [save_uploaded_file(img, "temp_media") for img in manual_images_uploaded_vid]
-                                image_paths = download_images(article_data.get('image_urls', []))
-                                image_paths.extend(manual_image_paths_vid)
-                                image_paths = sorted(set(image_paths), key=image_paths.index)
+                            article_data = scraped_data
+                            manual_image_paths_vid = [save_uploaded_file(img, "temp_media") for img in manual_images_uploaded_vid]
+                            image_paths = download_images(article_data.get('image_urls', []))
+                            image_paths.extend(manual_image_paths_vid)
+                            image_paths = sorted(set(image_paths), key=image_paths.index)
 
-                                if not image_paths:
-                                    if logo_file_path and os.path.exists(logo_file_path): image_paths = [logo_file_path]
-                                    else: st.error(f"!! [{i+1}/{total_urls}] لا توجد صور. الانتقال للتالي..."); time.sleep(3); continue
+                            if not image_paths:
+                                if logo_file_path and os.path.exists(logo_file_path): image_paths = [logo_file_path]
+                                else: st.error(f"!! [{i+1}/{total_urls}] لا توجد صور. الانتقال للتالي..."); time.sleep(3); continue
 
-                                settings = {
-                                    'dimensions': dimensions, 'tts_audio_path': None, 'tts_volume': tts_volume_vid, 'logo_file': logo_file_path,
-                                    'font_file': FONT_FILE, 'intro_video': intro_video_path, 'outro_video': outro_video_path,
-                                    'music_files': [save_uploaded_file(f) for f in music_files_uploaded_vid], 'sfx_file': save_uploaded_file(sfx_file_uploaded_vid),
-                                    'design_choice': design_choice_vid, 'cat': final_cat_vid, 'text_color': text_color_vid, 'shadow_color': shadow_color_vid,
-                                    'max_video_duration': max_video_duration, 'min_scene_duration': min_scene_duration, 'intro_duration': intro_duration, 'outro_duration': outro_duration,
-                                    'font_size': font_size, 'logo_size': logo_size_outro, 'music_volume': music_volume, 'sfx_volume': sfx_volume,
-                                    'enable_outro': enable_outro, 'pacing_multiplier': pacing_multiplier,
-                                }
+                            settings = {
+                                'dimensions': dimensions, 'tts_audio_path': None, 'tts_volume': tts_volume_vid, 'logo_file': logo_file_path,
+                                'font_file': FONT_FILE, 'intro_video': intro_video_path, 'outro_video': outro_video_path,
+                                'music_files': [save_uploaded_file(f) for f in music_files_uploaded_vid], 'sfx_file': save_uploaded_file(sfx_file_uploaded_vid),
+                                'design_choice': design_choice_vid, 'cat': final_cat_vid, 'text_color': text_color_vid, 'shadow_color': shadow_color_vid,
+                                'max_video_duration': max_video_duration, 'min_scene_duration': min_scene_duration, 'intro_duration': intro_duration, 'outro_duration': outro_duration,
+                                'font_size': font_size, 'logo_size': logo_size_outro, 'music_volume': music_volume, 'sfx_volume': sfx_volume,
+                                'enable_outro': enable_outro, 'pacing_multiplier': pacing_multiplier,
+                            }
 
-                                if enable_tts_vid and article_data:
-                                    st.text("⏳ جاري إنشاء التعليق الصوتي...")
-                                    full_text_for_tts = article_data['title'] + ". " + article_data.get('content', '')
-                                    tts_audio_path = generate_tts_audio(full_text_for_tts, tld=tts_tld_vid)
-                                    if tts_audio_path: settings['tts_audio_path'] = tts_audio_path
+                            if enable_tts_vid and article_data:
+                                st.text("⏳ جاري إنشاء التعليق الصوتي...")
+                                full_text_for_tts = article_data['title'] + ". " + article_data.get('content', '')
+                                tts_audio_path = generate_tts_audio(full_text_for_tts, tld=tts_tld_vid)
+                                if tts_audio_path: settings['tts_audio_path'] = tts_audio_path
+                            
+                            video_file, thumb_file = create_story_video(article_data, image_paths, settings, st)
+                            
+                            if video_file and thumb_file:
+                                st.text("📤 جاري نشر الفيديو إلى تليجرام...")
+                                caption=[f"<b>{article_data['title']}</b>",""]
+                                if url: caption.append(f"🔗 <b>المصدر:</b> {url}")
                                 
-                                video_file, thumb_file = create_story_video(article_data, image_paths, settings, st)
+                                success = send_to_telegram(video_file, caption, TELEGRAM_VIDEO_BOT_TOKEN, target_channel_id_vid, is_photo=False, thumb_path=thumb_file)
+                                if success: st.success(f"✅ تم نشر الفيديو [{i+1}/{total_urls}] بنجاح!")
+                                else: st.error(f"!! [{i+1}/{total_urls}] فشل النشر.")
                                 
-                                if video_file and thumb_file:
-                                    st.text("📤 جاري نشر الفيديو إلى تليجرام...")
-                                    caption=[f"<b>{article_data['title']}</b>",""]
-                                    if url: caption.append(f"🔗 <b>المصدر:</b> {url}")
-                                    
-                                    success = send_to_telegram(video_file, caption, TELEGRAM_VIDEO_BOT_TOKEN, target_channel_id_vid, is_photo=False, thumb_path=thumb_file)
-                                    if success: st.success(f"✅ تم نشر الفيديو [{i+1}/{total_urls}] بنجاح!")
-                                    else: st.error(f"!! [{i+1}/{total_urls}] فشل النشر.")
-                                    
-                                    for f in [video_file, thumb_file] + image_paths:
-                                         if f and os.path.exists(f) and ('brand_kits' not in f and 'uploads' not in f):
-                                            try: os.remove(f)
-                                            except OSError: pass
-                                else: st.error(f"❌ [{i+1}/{total_urls}] فشلت عملية إنشاء الفيديو.")
-                                
-                                batch_progress.progress((i + 1) / total_urls, text=f"اكتمل {i+1} من {total_urls}")
-                                if i < total_urls - 1:
-                                    for j in range(delay_between_posts, 0, -1):
-                                        st.info(f"⏱️ الانتظار لمدة {j} ثانية قبل الفيديو التالي..."); time.sleep(1)
+                                for f in [video_file, thumb_file] + image_paths:
+                                     if f and os.path.exists(f) and ('brand_kits' not in f and 'uploads' not in f):
+                                        try: os.remove(f)
+                                        except OSError: pass
+                            else: st.error(f"❌ [{i+1}/{total_urls}] فشلت عملية إنشاء الفيديو.")
+                            
+                            batch_progress.progress((i + 1) / total_urls, text=f"اكتمل {i+1} من {total_urls}")
+                            if i < total_urls - 1:
+                                for j in range(delay_between_posts, 0, -1):
+                                    st.info(f"⏱️ الانتظار لمدة {j} ثانية قبل الفيديو التالي..."); time.sleep(1)
                     
                     status_container.success("🎉 اكتملت جميع مهام المعالجة المجمعة للفيديو بنجاح!")
 
