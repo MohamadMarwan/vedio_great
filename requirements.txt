@@ -7,7 +7,6 @@ arabic_reshaper
 python-bidi
 python-telegram-bot
 opencv-python-headless
-ffmpeg-python
 requests
 beautifulsoup4
 gTTS
