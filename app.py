@@ -8,7 +8,7 @@ import os
 import asyncio
 import cv2
 import numpy as np
-import ffmpeg  # <-- استيراد قياسي وطبيعي
+import ffmpeg
 import requests
 from bs4 import BeautifulSoup
 from gtts import gTTS
@@ -53,14 +53,17 @@ def add_kashida(text):
                 result.append('ـ')
     return "".join(result)
 
-def process_text_for_image(text): return get_display(arabic_reshaper.reshape(text))
+def process_text_for_image(text):
+    reshaped_text = arabic_reshaper.reshape(text)
+    return get_display(reshaped_text)
 
 def wrap_text_to_pages(text, font, max_width, max_lines_per_page):
     if not text: return [[]]
     lines, words, current_line = [], text.split(), ''
     for word in words:
         test_line = f"{current_line} {word}".strip()
-        if font.getbbox(process_text_for_image(test_line))[2] <= max_width:
+        # Pillow with Raqm can now get the correct bbox width
+        if font.getlength(process_text_for_image(test_line)) <= max_width:
             current_line = test_line
         else:
             lines.append(current_line); current_line = word
@@ -68,9 +71,15 @@ def wrap_text_to_pages(text, font, max_width, max_lines_per_page):
     return [lines[i:i + max_lines_per_page] for i in range(0, len(lines), max_lines_per_page)]
 
 def draw_text_with_shadow(draw, position, text, font, fill_color, shadow_color):
-    x, y = position; processed_text = process_text_for_image(text); shadow_offset = 3
-    draw.text((x + shadow_offset, y + shadow_offset), processed_text, font=font, fill=shadow_color, stroke_width=2)
-    draw.text((x, y), processed_text, font=font, fill=fill_color)
+    x, y = position
+    processed_text = process_text_for_image(text)
+    shadow_offset = 3
+    
+    # رسم الظل مع اتجاه RTL
+    draw.text((x + shadow_offset, y + shadow_offset), processed_text, font=font, fill=shadow_color, stroke_width=2, direction='rtl', align='right')
+    
+    # رسم النص الأساسي مع اتجاه RTL
+    draw.text((x, y), processed_text, font=font, fill=fill_color, direction='rtl', align='right')
 
 def fit_image_to_box(img, box_width, box_height):
     img_ratio = img.width / img.height
@@ -92,23 +101,37 @@ def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, l
             draw.line([(0, i), (W, i)], fill=(r,g,b))
         draw.rectangle([(0,0), (W, header_height//3)], fill=(255,255,255,50))
         header_font = ImageFont.truetype(FONT_FILE, int(W / 14.5))
-        header_text_proc = process_text_for_image(template['name'])
-        draw_text_with_shadow(draw, ((W - header_font.getbbox(header_text_proc)[2]) / 2, (header_height - header_font.getbbox(header_text_proc)[3]) / 2 - 10), template['name'], header_font, TEXT_COLOR, SHADOW_COLOR)
+        
+        # عند استخدام RTL، يجب تعديل نقطة البداية لتكون في اليمين
+        line_width = header_font.getlength(process_text_for_image(template['name']))
+        text_x = W - ((W - line_width) / 2) # Start from the right edge
+        text_y = (header_height - header_font.getbbox(process_text_for_image(template['name']))[3]) / 2 - 10
+        draw_text_with_shadow(draw, (text_x, text_y), template['name'], header_font, TEXT_COLOR, SHADOW_COLOR)
+
     elif design_type == 'cinematic':
-        tag_font = ImageFont.truetype(FONT_FILE, int(W / 24)); tag_text = process_text_for_image(template['name'])
-        tag_bbox = tag_font.getbbox(tag_text); tag_width = tag_bbox[2] - tag_bbox[0] + 60; tag_height = tag_bbox[3] - tag_bbox[1] + 30
+        tag_font = ImageFont.truetype(FONT_FILE, int(W / 24))
+        tag_text = process_text_for_image(template['name'])
+        line_width = tag_font.getlength(tag_text)
+        tag_width = line_width + 60
+        tag_height = tag_font.getbbox(tag_text)[3] + 30
         tag_x, tag_y = W - tag_width - 40, 40
         draw.rounded_rectangle([tag_x, tag_y, tag_x + tag_width, tag_y + tag_height], radius=tag_height/2, fill=template['color'])
-        draw.text((tag_x + tag_width/2, tag_y + tag_height/2), tag_text, font=tag_font, fill=TEXT_COLOR, anchor="mm")
+        
+        text_x = W - 40 - 30 # Start from right edge minus padding
+        text_y = tag_y + (tag_height - tag_font.getbbox(tag_text)[3]) / 2
+        draw.text((text_x, text_y), tag_text, font=tag_font, fill=TEXT_COLOR, direction='rtl', align='right')
     
     if lines_to_draw:
         line_heights = [news_font.getbbox(process_text_for_image(line))[3] + 20 for line in lines_to_draw]
-        plate_height = sum(line_heights) + 60; plate_y0 = (H - plate_height) / 2
+        plate_height = sum(line_heights) + 60
+        plate_y0 = (H - plate_height) / 2
         draw.rectangle([(0, plate_y0), (W, plate_y0 + plate_height)], fill=TEXT_PLATE_COLOR)
+        
         text_y_start = plate_y0 + 30
         for line in lines_to_draw:
-            line_width = news_font.getbbox(process_text_for_image(line))[2]
-            draw_text_with_shadow(draw, ((W - line_width) / 2, text_y_start), line, news_font, TEXT_COLOR, SHADOW_COLOR)
+            line_width = news_font.getlength(process_text_for_image(line))
+            text_x = W - ((W - line_width) / 2)
+            draw_text_with_shadow(draw, (text_x, text_y_start), line, news_font, TEXT_COLOR, SHADOW_COLOR)
             text_y_start += news_font.getbbox(process_text_for_image(line))[3] + 20
 # =================================================================================
 
@@ -138,7 +161,8 @@ def create_video_frames(params, progress_bar):
     num_pages = len(text_pages)
     status_placeholder.info("⏳ جاري إنشاء الصورة المصغرة (Thumbnail)...")
     thumb_image = base_image.copy()
-    render_design(design_type, ImageDraw.Draw(thumb_image, 'RGBA'), W, H, template, text_pages[0], news_font, logo_img)
+    draw_thumb = ImageDraw.Draw(thumb_image, 'RGBA')
+    render_design(design_type, draw_thumb, W, H, template, text_pages[0], news_font, logo_img)
     thumb_path = f"temp_thumb_{int(time.time())}.jpg"
     thumb_image.convert('RGB').save(thumb_path, quality=85)
     silent_video_path = f"temp_silent_{int(time.time())}.mp4"
@@ -174,10 +198,12 @@ def create_video_frames(params, progress_bar):
         progress = i / outro_frames
         max_logo_size = int(min(W, H) / 2.5)
         current_size = int(max_logo_size * (progress ** 2))
-        outro_processed = process_text_for_image(FOOTER_TEXT)
-        text_width = outro_font.getbbox(outro_processed)[2]
+        
+        line_width = outro_font.getlength(process_text_for_image(FOOTER_TEXT))
+        text_x = W - ((W - line_width) / 2)
         text_y_pos = H//2 - (current_size//2) - 50 if logo_img else H // 2
-        draw_text_with_shadow(draw, ((W - text_width) / 2, text_y_pos), FOOTER_TEXT, outro_font, TEXT_COLOR, SHADOW_COLOR)
+        draw_text_with_shadow(draw, (text_x, text_y_pos), FOOTER_TEXT, outro_font, TEXT_COLOR, SHADOW_COLOR)
+
         if logo_img and current_size > 0:
             resized_logo = logo_img.resize((current_size, current_size), Image.Resampling.LANCZOS)
             logo_pos_x = (W - current_size) // 2
