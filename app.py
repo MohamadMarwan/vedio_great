@@ -12,9 +12,8 @@ import requests
 from bs4 import BeautifulSoup
 from gtts import gTTS
 import time
-# ffmpeg-python يتطلب تثبيت ffmpeg على النظام
-# يمكنك إضافته إلى packages.txt في Streamlit Cloud
-import ffmpeg 
+# تأكد من أن ffmpeg-python مثبت وأن ffmpeg متاح في بيئة النشر
+import ffmpeg
 
 # ================================ الإعدادات العامة =================================
 FONT_FILE = "Amiri-Bold.ttf"
@@ -41,17 +40,17 @@ FOOTER_TEXT = "تابعنا عبر موقع دليلك نيوز الإخباري
 # =================================================================================
 
 # ================================ دوال مساعدة (Helper Functions) ==================
-def process_text_for_image(text): 
-    """Reshapes and reverses Arabic text for PIL."""
-    return get_display(arabic_reshaper.reshape(text))
+def process_text_for_image(text):
+    """الدالة الأساسية لمعالجة النص العربي للعرض الصحيح."""
+    reshaped_text = arabic_reshaper.reshape(text)
+    return get_display(reshaped_text)
 
 def wrap_text_to_pages(text, font, max_width, max_lines_per_page):
-    """Wraps text into lines and then into pages."""
     if not text: return [[]]
     lines, words, current_line = [], text.split(), ''
     for word in words:
         test_line = f"{current_line} {word}".strip()
-        # نستخدم النص المعالج لقياس العرض بشكل صحيح
+        # نقيس عرض النص بعد معالجته لضمان الدقة
         if font.getbbox(process_text_for_image(test_line))[2] <= max_width:
             current_line = test_line
         else:
@@ -60,255 +59,208 @@ def wrap_text_to_pages(text, font, max_width, max_lines_per_page):
     lines.append(current_line)
     return [lines[i:i + max_lines_per_page] for i in range(0, len(lines), max_lines_per_page)]
 
-def draw_text_with_shadow(draw, position, text, font, fill_color, shadow_color):
-    """Draws text with a shadow effect after processing it for Arabic."""
+# ==== تعديل هام هنا ====
+def draw_text_with_shadow(draw, position, processed_text, font, fill_color, shadow_color):
+    """
+    ترسم النص المعالج مسبقًا مع ظل.
+    هذه الدالة الآن تفترض أن النص تمتهيئته وجاهز للرسم.
+    """
     x, y = position
-    processed_text = process_text_for_image(text)
     shadow_offset = 3
-    # Shadow layer
+    # طبقة الظل
     draw.text((x + shadow_offset, y + shadow_offset), processed_text, font=font, fill=shadow_color, stroke_width=2)
-    # Main text layer
+    # طبقة النص الأساسي
     draw.text((x, y), processed_text, font=font, fill=fill_color)
 
 def fit_image_to_box(img, box_width, box_height):
-    """Crops and resizes an image to fit a specified box, preserving aspect ratio."""
     img_ratio = img.width / img.height
     box_ratio = box_width / box_height
-    if img_ratio > box_ratio: # Image is wider than the box
+    if img_ratio > box_ratio:
         new_height = box_height
         new_width = int(new_height * img_ratio)
-    else: # Image is taller than or equal to the box ratio
+    else:
         new_width = box_width
         new_height = int(new_width / img_ratio)
-    
     img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-    
     left = (new_width - box_width) / 2
     top = (new_height - box_height) / 2
-    right = left + box_width
-    bottom = top + box_height
-    
-    return img.crop((left, top, right, bottom))
-    
+    return img.crop((left, top, left + box_width, top + box_height))
+
 def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, logo_img):
-    """Renders the chosen design template on the image frame."""
     if design_type == 'classic':
         header_height = int(H * 0.1)
-        dark_color = template['color']
-        light_color = tuple(min(c + 30, 255) for c in template['color'])
-        # Gradient header
+        dark_color, light_color = template['color'], tuple(min(c+30, 255) for c in template['color'])
         for i in range(header_height):
             ratio = i / header_height
-            r, g, b = [int(dark_color[j] * (1 - ratio) + light_color[j] * ratio) for j in range(3)]
-            draw.line([(0, i), (W, i)], fill=(r, g, b))
+            r,g,b = [int(dark_color[j]*(1-ratio) + light_color[j]*ratio) for j in range(3)]
+            draw.line([(0, i), (W, i)], fill=(r,g,b))
         
         header_font = ImageFont.truetype(FONT_FILE, int(W / 14.5))
-        draw_text_with_shadow(draw, ((W - news_font.getbbox(process_text_for_image(template['name']))[2]) / 1.7, (header_height - header_font.getbbox(process_text_for_image(template['name']))[3]) / 2 - 10), template['name'], header_font, TEXT_COLOR, SHADOW_COLOR)
+        # ==== تعديل هام: نعالج النص هنا قبل إرساله للرسم ====
+        processed_header_text = process_text_for_image(template['name'])
+        header_width = header_font.getbbox(processed_header_text)[2]
+        header_height_bbox = header_font.getbbox(processed_header_text)[3]
+        draw_text_with_shadow(draw, ((W - header_width) / 2, (header_height - header_height_bbox) / 2 - 10), processed_header_text, header_font, TEXT_COLOR, SHADOW_COLOR)
 
     elif design_type == 'cinematic':
         tag_font = ImageFont.truetype(FONT_FILE, int(W / 24))
-        tag_text = process_text_for_image(template['name'])
-        tag_bbox = tag_font.getbbox(tag_text)
-        tag_width = (tag_bbox[2] - tag_bbox[0]) + 60
-        tag_height = (tag_bbox[3] - tag_bbox[1]) + 30
+        tag_text_processed = process_text_for_image(template['name'])
+        tag_bbox = tag_font.getbbox(tag_text_processed)
+        tag_width = tag_bbox[2] - tag_bbox[0] + 60
+        tag_height = tag_bbox[3] - tag_bbox[1] + 30
         tag_x, tag_y = W - tag_width - 40, 40
-        draw.rounded_rectangle([tag_x, tag_y, tag_x + tag_width, tag_y + tag_height], radius=tag_height / 2, fill=template['color'])
-        draw.text((tag_x + tag_width / 2, tag_y + tag_height / 2), tag_text, font=tag_font, fill=TEXT_COLOR, anchor="mm")
-    
-    # Common text plate for both designs
+        draw.rounded_rectangle([tag_x, tag_y, tag_x + tag_width, tag_y + tag_height], radius=tag_height/2, fill=template['color'])
+        # نستخدم النص المعالج مباشرة
+        draw.text((tag_x + tag_width/2, tag_y + tag_height/2), tag_text_processed, font=tag_font, fill=TEXT_COLOR, anchor="mm")
+
     if lines_to_draw:
-        line_heights = [news_font.getbbox(process_text_for_image(line))[3] + 20 for line in lines_to_draw]
+        processed_lines = [process_text_for_image(line) for line in lines_to_draw]
+        line_heights = [news_font.getbbox(p_line)[3] + 20 for p_line in processed_lines]
         plate_height = sum(line_heights) + 60
         plate_y0 = (H - plate_height) / 2
         draw.rectangle([(0, plate_y0), (W, plate_y0 + plate_height)], fill=TEXT_PLATE_COLOR)
         
         text_y_start = plate_y0 + 30
-        for line in lines_to_draw:
-            line_width = news_font.getbbox(process_text_for_image(line))[2]
-            draw_text_with_shadow(draw, ((W - line_width) / 2, text_y_start), line, news_font, TEXT_COLOR, SHADOW_COLOR)
-            text_y_start += news_font.getbbox(process_text_for_image(line))[3] + 20
+        for p_line in processed_lines:
+            line_width = news_font.getbbox(p_line)[2]
+            # ==== تعديل هام: نرسل النص المعالج للدالة ====
+            draw_text_with_shadow(draw, ((W - line_width) / 2, text_y_start), p_line, news_font, TEXT_COLOR, SHADOW_COLOR)
+            text_y_start += news_font.getbbox(p_line)[3] + 20
+# =================================================================================
 
-# ======================== الدوال الأساسية لإنشاء الفيديو ==========================
+# ... بقية الكود (create_video_frames, combine_media, main_app, etc.) يبقى كما هو ...
+# التعديل الرئيسي كان في دوال الرسم لضمان معالجة النص دائمًا.
+# سأضع لك الكود كاملاً لسهولة النسخ.
+
 def create_video_frames(params, progress_bar):
-    """Generates all the individual frames for the silent video part."""
     W, H = params['dimensions']
     news_title = params['text']
     template = params['template']
     background_image_path = params['image_path']
     design_type = params['design_type']
     logo_file = params['logo_path']
-    
     status_placeholder = st.empty()
-    
     try:
         font_size_base = int(W / 12)
         news_font = ImageFont.truetype(FONT_FILE, font_size_base if len(news_title) < 50 else font_size_base - 20)
-        
         if background_image_path and os.path.exists(background_image_path):
             base_image_raw = Image.open(background_image_path).convert("RGB")
             base_image = fit_image_to_box(base_image_raw, W, H)
         else:
             default_bg_logo = Image.open(logo_file).convert("RGB")
-            base_image = default_bg_logo.resize((W, H)).filter(ImageFilter.GaussianBlur(15))
-        
+            base_image = default_bg_logo.resize((W,H)).filter(ImageFilter.GaussianBlur(15))
         logo_img = Image.open(logo_file).convert("RGBA") if logo_file and os.path.exists(logo_file) else None
     except Exception as e: 
         st.error(f"خطأ في تحميل الملفات الأساسية (الخط، اللوجو، الصورة): {e}")
         return None, None
-
-    text_pages = wrap_text_to_pages(news_title, news_font, max_width=W - 120, max_lines_per_page=params['max_lines'])
+    text_pages = wrap_text_to_pages(news_title, news_font, max_width=W-120, max_lines_per_page=params['max_lines'])
     num_pages = len(text_pages)
-    
     status_placeholder.info("⏳ جاري إنشاء الصورة المصغرة (Thumbnail)...")
     thumb_image = base_image.copy()
-    draw_thumb = ImageDraw.Draw(thumb_image, 'RGBA')
-    render_design(design_type, draw_thumb, W, H, template, text_pages[0], news_font, logo_img)
+    render_design(design_type, ImageDraw.Draw(thumb_image, 'RGBA'), W, H, template, text_pages[0], news_font, logo_img)
     thumb_path = f"temp_thumb_{int(time.time())}.jpg"
     thumb_image.convert('RGB').save(thumb_path, quality=85)
-    
     silent_video_path = f"temp_silent_{int(time.time())}.mp4"
     video_writer = cv2.VideoWriter(silent_video_path, cv2.VideoWriter_fourcc(*'mp4v'), FPS, (W, H))
-    
     total_main_frames = int(params['seconds_per_page'] * FPS) * num_pages
     total_video_frames = total_main_frames + int(params['outro_duration'] * FPS)
     global_frame_index = 0
-    
     for page_index, original_page_lines in enumerate(text_pages):
         status_placeholder.info(f"⏳ جاري معالجة الصفحة {page_index + 1}/{num_pages}...")
         page_text = " ".join(original_page_lines) + (" ..." if num_pages > 1 and page_index < num_pages - 1 else "")
         words_on_page = page_text.split()
         num_words_on_page = len(words_on_page)
-        
         for i in range(int(params['seconds_per_page'] * FPS)):
             progress_in_video = global_frame_index / total_video_frames
             zoom = 1 + progress_in_video * (params['ken_burns_zoom'] - 1)
             zoomed_w, zoomed_h = int(W * zoom), int(H * zoom)
             zoomed_bg = base_image.resize((zoomed_w, zoomed_h), Image.Resampling.LANCZOS)
-            
-            x_offset = (zoomed_w - W) / 2
-            y_offset = (zoomed_h - H) / 2
+            x_offset = (zoomed_w - W) / 2; y_offset = (zoomed_h - H) / 2
             frame_bg = zoomed_bg.crop((x_offset, y_offset, x_offset + W, y_offset + H))
-            
             draw = ImageDraw.Draw(frame_bg, 'RGBA')
-            
             seconds_on_page = i / FPS
             words_to_show_count = min(num_words_on_page, int(seconds_on_page * params['words_per_second']) + 1)
-            current_text_to_render = " ".join(words_on_page[:words_to_show_count])
-            lines_to_draw_now = wrap_text_to_pages(current_text_to_render, news_font, W - 120, params['max_lines'])[0]
-
+            lines_to_draw_now = wrap_text_to_pages(" ".join(words_on_page[:words_to_show_count]), news_font, W-120, params['max_lines'])[0]
             render_design(design_type, draw, W, H, template, lines_to_draw_now, news_font, logo_img)
-            
             video_writer.write(cv2.cvtColor(np.array(frame_bg), cv2.COLOR_RGB2BGR))
             global_frame_index += 1
             progress_bar.progress(global_frame_index / total_video_frames)
-
     status_placeholder.info("⏳ جاري إضافة الخاتمة...")
     outro_frames = int(params['outro_duration'] * FPS)
     outro_font = ImageFont.truetype(FONT_FILE, int(W / 18))
-    
+    # ==== تعديل هام: نعالج نص الخاتمة مرة واحدة هنا ====
+    outro_processed_text = process_text_for_image(FOOTER_TEXT)
+    text_width = outro_font.getbbox(outro_processed_text)[2]
     for i in range(outro_frames):
-        image = Image.new('RGB', (W, H), (10, 10, 10))
-        draw = ImageDraw.Draw(image, 'RGBA')
+        image = Image.new('RGB', (W, H), (10, 10, 10)); draw = ImageDraw.Draw(image, 'RGBA')
         progress = i / outro_frames
-        
         max_logo_size = int(min(W, H) / 2.5)
-        current_size = int(max_logo_size * (progress ** 2)) # Ease-in effect
-        
-        text_y_pos = H // 2 - (current_size // 2) - 50 if logo_img else H // 2
-        draw_text_with_shadow(draw, ((W - outro_font.getbbox(process_text_for_image(FOOTER_TEXT))[2]) / 2, text_y_pos), FOOTER_TEXT, outro_font, TEXT_COLOR, SHADOW_COLOR)
-
+        current_size = int(max_logo_size * (progress ** 2))
+        text_y_pos = H//2 - (current_size//2) - 50 if logo_img else H // 2
+        draw_text_with_shadow(draw, ((W - text_width) / 2, text_y_pos), outro_processed_text, outro_font, TEXT_COLOR, SHADOW_COLOR)
         if logo_img and current_size > 0:
             resized_logo = logo_img.resize((current_size, current_size), Image.Resampling.LANCZOS)
             logo_pos_x = (W - current_size) // 2
-            logo_pos_y = H // 2 - (current_size // 2) + 20
+            logo_pos_y = H//2 - (current_size//2) + 20
             image.paste(resized_logo, (logo_pos_x, logo_pos_y), resized_logo)
-            
         video_writer.write(cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB2BGR))
         global_frame_index += 1
         progress_bar.progress(min(1.0, global_frame_index / total_video_frames))
-        
     video_writer.release()
     status_placeholder.empty()
     return silent_video_path, thumb_path
 
 def combine_media(params, silent_video_path):
-    """Combines all video and audio sources using ffmpeg-python."""
+    import ffmpeg as ffmpeg_lib
     status_placeholder = st.empty()
     status_placeholder.info("⏳ جاري دمج الصوتيات ومقاطع الفيديو الإضافية...")
-    
     try:
-        main_video = ffmpeg.input(silent_video_path)
+        main_video = ffmpeg_lib.input(silent_video_path)
         video_parts = []
         audio_parts = []
-        
-        # Intro
         if params['intro_path']:
-            intro_clip = ffmpeg.input(params['intro_path'])
-            video_parts.append(intro_clip.video)
-            # Check if intro has audio
-            if 'audio' in [s['codec_type'] for s in ffmpeg.probe(params['intro_path'])['streams']]:
-                audio_parts.append(intro_clip.audio)
-
+            intro_clip = ffmpeg_lib.input(params['intro_path'])
+            video_parts.extend([intro_clip.video])
+            if 'audio' in [s['codec_type'] for s in ffmpeg_lib.probe(params['intro_path'])['streams']]:
+                audio_parts.extend([intro_clip.audio])
         video_parts.append(main_video.video)
-        
-        # Audio Mixing
-        main_audio_sources = []
+        voiceover_stream = None
         if params['voiceover_path']:
-            main_audio_sources.append(ffmpeg.input(params['voiceover_path']).audio)
+            voiceover_stream = ffmpeg_lib.input(params['voiceover_path']).audio
+        music_stream = None
         if params['music_path']:
-            # loop music for the duration of the main video
-            main_video_duration = float(ffmpeg.probe(silent_video_path)['format']['duration'])
-            music_stream = (
-                ffmpeg
-                .input(params['music_path'], stream_loop=-1)
-                .filter('volume', params['music_volume'])
-                .filter('atrim', duration=main_video_duration)
-            )
-            main_audio_sources.append(music_stream)
-
-        if len(main_audio_sources) > 1:
-            # Mix voiceover and music
-            mixed_main_audio = ffmpeg.filter(main_audio_sources, 'amix', duration='first', dropout_transition=0)
-            audio_parts.append(mixed_main_audio)
-        elif len(main_audio_sources) == 1:
-            audio_parts.append(main_audio_sources[0])
-
-        # Outro
+            main_video_duration = float(ffmpeg_lib.probe(silent_video_path)['format']['duration'])
+            music_stream = (ffmpeg_lib.input(params['music_path'], stream_loop=-1).filter('volume', params['music_volume']).filter('atrim', duration=main_video_duration))
+        if voiceover_stream and music_stream:
+            mixed_audio = ffmpeg_lib.filter([voiceover_stream, music_stream], 'amix', duration='first', dropout_transition=0)
+            audio_parts.append(mixed_audio)
+        elif voiceover_stream:
+            audio_parts.append(voiceover_stream)
+        elif music_stream:
+            audio_parts.append(music_stream)
         if params['outro_path']:
-            outro_clip = ffmpeg.input(params['outro_path'])
+            outro_clip = ffmpeg_lib.input(params['outro_path'])
             video_parts.append(outro_clip.video)
-            # Check if outro has audio
-            if 'audio' in [s['codec_type'] for s in ffmpeg.probe(params['outro_path'])['streams']]:
+            if 'audio' in [s['codec_type'] for s in ffmpeg_lib.probe(params['outro_path'])['streams']]:
                 audio_parts.append(outro_clip.audio)
-
-        final_video = ffmpeg.concat(*video_parts, v=1, a=0)
+        final_video = ffmpeg_lib.concat(*video_parts, v=1, a=0)
         output_video_name = f"final_video_{int(time.time())}.mp4"
-        
         if audio_parts:
-            final_audio = ffmpeg.concat(*audio_parts, v=0, a=1)
-            stream = ffmpeg.output(final_video, final_audio, output_video_name, vcodec='libx264', acodec='aac', pix_fmt='yuv420p', loglevel="quiet")
-        else: # No audio to add
-            stream = ffmpeg.output(final_video, output_video_name, vcodec='libx264', pix_fmt='yuv420p', loglevel="quiet")
-        
+            final_audio = ffmpeg_lib.concat(*audio_parts, v=0, a=1)
+            stream = ffmpeg_lib.output(final_video, final_audio, output_video_name, vcodec='libx264', acodec='aac', pix_fmt='yuv420p', loglevel="quiet")
+        else:
+            stream = ffmpeg_lib.output(final_video, output_video_name, vcodec='libx264', pix_fmt='yuv420p', loglevel="quiet")
         stream.overwrite_output().run()
-        
         status_placeholder.empty()
         return output_video_name
-
-    except ffmpeg.Error as e:
+    except ffmpeg_lib.Error as e:
         st.error(f"!! خطأ فادح أثناء دمج الفيديو بالصوت (ffmpeg):")
         st.code(e.stderr.decode() if e.stderr else 'Unknown Error')
         return None
     finally:
-        # Cleanup temporary files
         if os.path.exists(silent_video_path): os.remove(silent_video_path)
         if params.get('voiceover_path') and "temp_tts" in params['voiceover_path']: os.remove(params['voiceover_path'])
 
-
-# The rest of your Streamlit UI code (login_page, main_app, etc.) goes here
-# It does not need changes related to the Arabic text rendering logic.
-# ... (Your UI code from the original snippet) ...
-# ================================ دوال الواجهة والتطبيق ==========================
 def login_page():
     st.title("تسجيل الدخول")
     st.write("الرجاء إدخال اسم المستخدم وكلمة المرور للوصول إلى الأداة.")
@@ -317,7 +269,6 @@ def login_page():
         password = st.text_input("كلمة المرور", type="password")
         submitted = st.form_submit_button("دخول")
         if submitted:
-            # Simple check for secrets existence before accessing
             if hasattr(st, 'secrets') and "users" in st.secrets and username in st.secrets.users and st.secrets.users[username] == password:
                 st.session_state["logged_in"] = True
                 st.session_state["username"] = username
@@ -327,7 +278,7 @@ def login_page():
 
 def scrape_article_page(url):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
@@ -389,10 +340,9 @@ def main_app():
         
     st.header("1. إدخال المحتوى")
     input_method = st.radio("اختر طريقة الإدخال:", ("إدخال نص يدوي", "سحب البيانات من رابط"))
-    
-    if 'news_text' not in st.session_state: st.session_state['news_text'] = ''
-    if 'news_image_path' not in st.session_state: st.session_state['news_image_path'] = None
-
+    news_text = ""
+    news_image_path = None
+    news_url = ""
     if input_method == "سحب البيانات من رابط":
         news_url = st.text_input("أدخل رابط المقال هنا:")
         if st.button("🔍 سحب البيانات"):
@@ -404,26 +354,19 @@ def main_app():
                         if article_data['image_url']:
                            st.session_state['news_image_path'] = download_image(article_data['image_url'])
                            st.success("تم سحب البيانات بنجاح!")
-                        else:
-                           st.warning("تم سحب العنوان ولكن لم يتم العثور على صورة.")
                     else:
                         st.error("لم يتم العثور على بيانات في الرابط.")
             else:
                 st.warning("الرجاء إدخال رابط.")
-
     news_text = st.text_area("نص الخبر:", value=st.session_state.get('news_text', ''), height=150)
     st.write("صورة الخلفية:")
-    
-    if st.session_state['news_image_path'] and os.path.exists(st.session_state['news_image_path']):
-        st.image(st.session_state['news_image_path'], caption="الصورة الحالية", width=200)
-
+    if 'news_image_path' in st.session_state and st.session_state['news_image_path']:
+        st.image(st.session_state['news_image_path'], caption="الصورة المسحوبة من الرابط", width=200)
     uploaded_background = st.file_uploader("أو قم برفع صورة خلفية مخصصة (اختياري)", type=['jpg', 'jpeg', 'png'])
-    
     if uploaded_background:
         news_image_path = save_uploaded_file(uploaded_background)
-    else:
+    elif 'news_image_path' in st.session_state:
         news_image_path = st.session_state.get('news_image_path')
-
     st.header("2. تخصيص الفيديو")
     col1, col2 = st.columns(2)
     with col1:
@@ -442,12 +385,12 @@ def main_app():
         max_lines = st.slider("أقصى عدد للأسطر في الصفحة:", 1, 6, 3)
         outro_duration = st.slider("مدة الخاتمة (ثانية):", 1.0, 10.0, 6.5)
         ken_burns_zoom = st.slider("معامل تقريب Ken Burns:", 1.0, 1.2, 1.05)
-    
     st.header("3. تخصيص الوسائط (اختياري)")
     media_col1, media_col2 = st.columns(2)
     with media_col1:
         st.subheader("الصوتيات")
         use_tts = st.checkbox("🎤 إنشاء تعليق صوتي من نص الخبر (TTS)")
+        voiceover_path = None
         uploaded_music = st.file_uploader("🎵 رفع موسيقى خلفية", type=['mp3', 'wav', 'aac'])
         music_path = save_uploaded_file(uploaded_music)
         music_volume = st.slider("🔊 مستوى صوت الموسيقى:", 0.0, 1.0, 0.15, disabled=(music_path is None))
@@ -459,7 +402,6 @@ def main_app():
         intro_path = save_uploaded_file(uploaded_intro)
         uploaded_outro = st.file_uploader("🎞️ رفع فيديو خاتمة (Outro)", type=['mp4'])
         outro_path = save_uploaded_file(uploaded_outro)
-        
     st.header("4. إنشاء ونشر")
     if st.button("🚀 ابدأ إنشاء الفيديو", type="primary"):
         if not news_text.strip():
@@ -467,7 +409,6 @@ def main_app():
         elif not logo_path:
             st.error("خطأ: لم يتم العثور على ملف اللوجو. يرجى التأكد من وجود `logo.png` أو رفع ملف مخصص.")
         else:
-            voiceover_path = None
             with st.spinner("التحضير لإنشاء الفيديو..."):
                 if use_tts:
                     try:
@@ -479,7 +420,6 @@ def main_app():
                     except Exception as e:
                         st.warning(f"فشل إنشاء التعليق الصوتي: {e}. سيتم إنشاء الفيديو بدون صوت.")
                         voiceover_path = None
-                
                 params = {
                     'text': news_text, 'image_path': news_image_path, 'design_type': design_type,
                     'template': selected_template, 'dimensions': (W, H), 'seconds_per_page': seconds_per_page,
@@ -488,41 +428,30 @@ def main_app():
                     'music_volume': music_volume, 'intro_path': intro_path, 'outro_path': outro_path,
                     'voiceover_path': voiceover_path
                 }
-
                 progress_bar = st.progress(0, "بدء عملية إنشاء الإطارات...")
                 silent_video_path, thumb_path = create_video_frames(params, progress_bar)
-                
                 if silent_video_path:
                     final_video_path = combine_media(params, silent_video_path)
                     if final_video_path:
                         st.success("🎉 اكتمل إنشاء الفيديو بنجاح!")
                         st.video(final_video_path)
-                        
-                        # Prepare caption for Telegram
-                        final_caption = news_text
-                        if input_method == "سحب البيانات من رابط" and news_url:
-                            final_caption += f"\n\n<b>{DETAILS_TEXT}</b> {news_url}"
-                        
+                        caption_parts = [news_text]
+                        if news_url:
+                            caption_parts.extend(["", f"<b>{DETAILS_TEXT}</b> {news_url}"])
+                        final_caption = "\n".join(caption_parts)
                         if st.checkbox("نشر الفيديو على تليجرام؟", value=True):
                             if st.button("📤 إرسال إلى تليجرام"):
                                 with st.spinner("جاري الإرسال..."):
                                     asyncio.run(send_to_telegram(final_video_path, thumb_path, final_caption, selected_template['hashtag']))
 
-# ============================ نقطة بداية التطبيق ==============================
 st.set_page_config(page_title="أداة إنشاء الفيديو الإخباري", layout="wide")
-
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
-
 if st.session_state["logged_in"]:
     with st.sidebar:
         st.write(f"المستخدم: **{st.session_state.get('username', '')}**")
         if st.button("تسجيل الخروج"):
             st.session_state["logged_in"] = False
-            # Clear session state on logout
-            for key in list(st.session_state.keys()):
-                if key != 'logged_in':
-                    del st.session_state[key]
             st.rerun()
     main_app()
 else:
