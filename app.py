@@ -1,11 +1,11 @@
 # ==============================================================================
-#     أداة إنشاء ونشر الفيديو الإخباري الاحترافي (إصدار 10.3 - مصادقة مبسطة)
-#     - نظام تسجيل دخول يعتمد على اسم مستخدم وكلمة مرور فقط
+#     أداة إنشاء ونشر الفيديو الإخباري الاحترافي (إصدار 10.2 - مصحح الأخطاء)
+#     - إصلاح خطأ استيراد مكتبة numpy
 # ==============================================================================
 import os
 import random
 import cv2
-import numpy as np
+import numpy as np  # >> تم التصحيح <<: كان "asnp" بالخطأ
 import ffmpeg
 import requests
 from bs4 import BeautifulSoup
@@ -23,24 +23,21 @@ import streamlit_authenticator as stauth
 # ==============================================================================
 st.set_page_config(page_title="أداة إنشاء الفيديو الإخباري", layout="wide", initial_sidebar_state="expanded")
 
-# --- نظام تسجيل الدخول المبسط ---
+# --- نظام تسجيل الدخول يقرأ من st.secrets ---
+# نقوم بتحويل بنية st.secrets إلى قاموس عادي تتوقعه المكتبة
 try:
-    # نقوم بتحويل بنية st.secrets إلى قاموس عادي
-    credentials = st.secrets["credentials"].to_dict()
-    cookie = st.secrets["cookie"].to_dict()
-    
-    # >> جديد: نقوم بإضافة الحقول الوهمية التي تتوقعها المكتبة <<
-    for user_key in credentials.get('usernames', {}):
-        if 'name' not in credentials['usernames'][user_key]:
-            credentials['usernames'][user_key]['name'] = user_key.capitalize() # استخدم اسم المستخدم كاسم كامل
-        if 'email' not in credentials['usernames'][user_key]:
-            credentials['usernames'][user_key]['email'] = f"{user_key}@example.com" # استخدم بريدًا وهميًا
+    config = {
+        "credentials": st.secrets["credentials"].to_dict(),
+        "cookie": st.secrets["cookie"].to_dict(),
+        "preauthorized": st.secrets["preauthorized"].to_dict()
+    }
 
     authenticator = stauth.Authenticate(
-        credentials,
-        cookie['name'],
-        cookie['key'],
-        cookie['expiry_days']
+        config['credentials'],
+        config['cookie']['name'],
+        config['cookie']['key'],
+        config['cookie']['expiry_days'],
+        config['preauthorized']
     )
 
     name, authentication_status, username = authenticator.login('main')
@@ -52,16 +49,16 @@ try:
 
 except Exception as e:
     st.error("حدث خطأ في تحميل إعدادات تسجيل الدخول من ملف secrets.toml.")
-    st.error("يرجى التأكد من أن الملف موجود في مجلد .streamlit وأن هيكله صحيح (خاصة قسم [credentials] و [cookie]).")
-    st.code(f"Error details: {e}")
-    authentication_status = False
+    st.error("يرجى التأكد من أن الملف موجود في مجلد .streamlit وأن هيكله صحيح.")
+    st.code(e) # لعرض الخطأ الفني للمساعدة في التشخيص
+    authentication_status = False # منع التطبيق من العمل
 
 # --- إذا تم تسجيل الدخول بنجاح، قم بعرض التطبيق بالكامل ---
 if authentication_status:
     # ------------------ بداية الكود الأصلي للتطبيق ------------------
 
     st.title("🚀 أداة إنشاء ونشر الفيديو الإخباري الاحترافي")
-    st.markdown("v10.3 - مصادقة مبسطة")
+    st.markdown("v10.2 - الأمان المركزي (مصحح)")
 
     # إنشاء مجلدات ضرورية
     if not os.path.exists("uploads"): os.makedirs("uploads")
@@ -336,7 +333,7 @@ if authentication_status:
     #                      واجهة المستخدم الرسومية (Streamlit)
     # ==============================================================================
     with st.sidebar:
-        st.write(f'أهلاً بك *{username}*')
+        st.write(f'أهلاً بك *{name}*')
         authenticator.logout('تسجيل الخروج', 'main')
         st.header("🎬 إعدادات الفيديو الأساسية")
         aspect_ratio_option = st.selectbox("اختر أبعاد الفيديو (النسبة):", ("16:9 (يوتيوب، أفقي)", "9:16 (تيك توك، عمودي)"), key="aspect_ratio")
@@ -416,7 +413,7 @@ if authentication_status:
             with st.spinner('⏳ جاري تحضير البيانات...'):
                 if item['type'] == 'url':
                     source_url = item['value']; scraped_data = scrape_article_data(source_url)
-                    if scraped_data: article_data = scraped_data; image_paths.extend(download_images(article_data.get('image_urls', [])))
+                    if scraped_data: article_data = scraped_data; image_paths.extend(download_images(article_data['image_urls']))
                 elif item['type'] == 'text': article_data = {'title': item['title'], 'content': item['content']}
                 image_paths.extend(manual_image_paths)
                 image_paths = sorted(set(image_paths), key=image_paths.index)
