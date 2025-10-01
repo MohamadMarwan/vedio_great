@@ -11,4 +11,3 @@ gTTS
 numpy
 
 Pillow
- --no-binary :all:
