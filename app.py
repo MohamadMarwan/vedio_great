@@ -12,7 +12,9 @@ import requests
 from bs4 import BeautifulSoup
 from gtts import gTTS
 import time
-# تأكد من أن ffmpeg-python مثبت وأن ffmpeg متاح في بيئة النشر
+
+# هام: هذه المكتبة تتطلب وجود برنامج ffmpeg مثبتاً على النظام.
+# لحل خطأ FileNotFoundError في Streamlit Cloud، يجب إنشاء ملف packages.txt يحتوي على كلمة 'ffmpeg'.
 import ffmpeg
 
 # ================================ الإعدادات العامة =================================
@@ -50,7 +52,6 @@ def wrap_text_to_pages(text, font, max_width, max_lines_per_page):
     lines, words, current_line = [], text.split(), ''
     for word in words:
         test_line = f"{current_line} {word}".strip()
-        # نقيس عرض النص بعد معالجته لضمان الدقة
         if font.getbbox(process_text_for_image(test_line))[2] <= max_width:
             current_line = test_line
         else:
@@ -59,17 +60,11 @@ def wrap_text_to_pages(text, font, max_width, max_lines_per_page):
     lines.append(current_line)
     return [lines[i:i + max_lines_per_page] for i in range(0, len(lines), max_lines_per_page)]
 
-# ==== تعديل هام هنا ====
 def draw_text_with_shadow(draw, position, processed_text, font, fill_color, shadow_color):
-    """
-    ترسم النص المعالج مسبقًا مع ظل.
-    هذه الدالة الآن تفترض أن النص تمتهيئته وجاهز للرسم.
-    """
+    """ترسم النص المعالج مسبقًا مع ظل."""
     x, y = position
     shadow_offset = 3
-    # طبقة الظل
     draw.text((x + shadow_offset, y + shadow_offset), processed_text, font=font, fill=shadow_color, stroke_width=2)
-    # طبقة النص الأساسي
     draw.text((x, y), processed_text, font=font, fill=fill_color)
 
 def fit_image_to_box(img, box_width, box_height):
@@ -96,7 +91,6 @@ def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, l
             draw.line([(0, i), (W, i)], fill=(r,g,b))
         
         header_font = ImageFont.truetype(FONT_FILE, int(W / 14.5))
-        # ==== تعديل هام: نعالج النص هنا قبل إرساله للرسم ====
         processed_header_text = process_text_for_image(template['name'])
         header_width = header_font.getbbox(processed_header_text)[2]
         header_height_bbox = header_font.getbbox(processed_header_text)[3]
@@ -110,7 +104,6 @@ def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, l
         tag_height = tag_bbox[3] - tag_bbox[1] + 30
         tag_x, tag_y = W - tag_width - 40, 40
         draw.rounded_rectangle([tag_x, tag_y, tag_x + tag_width, tag_y + tag_height], radius=tag_height/2, fill=template['color'])
-        # نستخدم النص المعالج مباشرة
         draw.text((tag_x + tag_width/2, tag_y + tag_height/2), tag_text_processed, font=tag_font, fill=TEXT_COLOR, anchor="mm")
 
     if lines_to_draw:
@@ -123,14 +116,8 @@ def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, l
         text_y_start = plate_y0 + 30
         for p_line in processed_lines:
             line_width = news_font.getbbox(p_line)[2]
-            # ==== تعديل هام: نرسل النص المعالج للدالة ====
             draw_text_with_shadow(draw, ((W - line_width) / 2, text_y_start), p_line, news_font, TEXT_COLOR, SHADOW_COLOR)
             text_y_start += news_font.getbbox(p_line)[3] + 20
-# =================================================================================
-
-# ... بقية الكود (create_video_frames, combine_media, main_app, etc.) يبقى كما هو ...
-# التعديل الرئيسي كان في دوال الرسم لضمان معالجة النص دائمًا.
-# سأضع لك الكود كاملاً لسهولة النسخ.
 
 def create_video_frames(params, progress_bar):
     W, H = params['dimensions']
@@ -188,7 +175,6 @@ def create_video_frames(params, progress_bar):
     status_placeholder.info("⏳ جاري إضافة الخاتمة...")
     outro_frames = int(params['outro_duration'] * FPS)
     outro_font = ImageFont.truetype(FONT_FILE, int(W / 18))
-    # ==== تعديل هام: نعالج نص الخاتمة مرة واحدة هنا ====
     outro_processed_text = process_text_for_image(FOOTER_TEXT)
     text_width = outro_font.getbbox(outro_processed_text)[2]
     for i in range(outro_frames):
@@ -211,49 +197,48 @@ def create_video_frames(params, progress_bar):
     return silent_video_path, thumb_path
 
 def combine_media(params, silent_video_path):
-    import ffmpeg as ffmpeg_lib
     status_placeholder = st.empty()
     status_placeholder.info("⏳ جاري دمج الصوتيات ومقاطع الفيديو الإضافية...")
     try:
-        main_video = ffmpeg_lib.input(silent_video_path)
+        main_video = ffmpeg.input(silent_video_path)
         video_parts = []
         audio_parts = []
         if params['intro_path']:
-            intro_clip = ffmpeg_lib.input(params['intro_path'])
+            intro_clip = ffmpeg.input(params['intro_path'])
             video_parts.extend([intro_clip.video])
-            if 'audio' in [s['codec_type'] for s in ffmpeg_lib.probe(params['intro_path'])['streams']]:
+            if 'audio' in [s['codec_type'] for s in ffmpeg.probe(params['intro_path'])['streams']]:
                 audio_parts.extend([intro_clip.audio])
         video_parts.append(main_video.video)
         voiceover_stream = None
         if params['voiceover_path']:
-            voiceover_stream = ffmpeg_lib.input(params['voiceover_path']).audio
+            voiceover_stream = ffmpeg.input(params['voiceover_path']).audio
         music_stream = None
         if params['music_path']:
-            main_video_duration = float(ffmpeg_lib.probe(silent_video_path)['format']['duration'])
-            music_stream = (ffmpeg_lib.input(params['music_path'], stream_loop=-1).filter('volume', params['music_volume']).filter('atrim', duration=main_video_duration))
+            main_video_duration = float(ffmpeg.probe(silent_video_path)['format']['duration'])
+            music_stream = (ffmpeg.input(params['music_path'], stream_loop=-1).filter('volume', params['music_volume']).filter('atrim', duration=main_video_duration))
         if voiceover_stream and music_stream:
-            mixed_audio = ffmpeg_lib.filter([voiceover_stream, music_stream], 'amix', duration='first', dropout_transition=0)
+            mixed_audio = ffmpeg.filter([voiceover_stream, music_stream], 'amix', duration='first', dropout_transition=0)
             audio_parts.append(mixed_audio)
         elif voiceover_stream:
             audio_parts.append(voiceover_stream)
         elif music_stream:
             audio_parts.append(music_stream)
         if params['outro_path']:
-            outro_clip = ffmpeg_lib.input(params['outro_path'])
+            outro_clip = ffmpeg.input(params['outro_path'])
             video_parts.append(outro_clip.video)
-            if 'audio' in [s['codec_type'] for s in ffmpeg_lib.probe(params['outro_path'])['streams']]:
+            if 'audio' in [s['codec_type'] for s in ffmpeg.probe(params['outro_path'])['streams']]:
                 audio_parts.append(outro_clip.audio)
-        final_video = ffmpeg_lib.concat(*video_parts, v=1, a=0)
+        final_video = ffmpeg.concat(*video_parts, v=1, a=0)
         output_video_name = f"final_video_{int(time.time())}.mp4"
         if audio_parts:
-            final_audio = ffmpeg_lib.concat(*audio_parts, v=0, a=1)
-            stream = ffmpeg_lib.output(final_video, final_audio, output_video_name, vcodec='libx264', acodec='aac', pix_fmt='yuv420p', loglevel="quiet")
+            final_audio = ffmpeg.concat(*audio_parts, v=0, a=1)
+            stream = ffmpeg.output(final_video, final_audio, output_video_name, vcodec='libx264', acodec='aac', pix_fmt='yuv420p', loglevel="quiet")
         else:
-            stream = ffmpeg_lib.output(final_video, output_video_name, vcodec='libx264', pix_fmt='yuv420p', loglevel="quiet")
+            stream = ffmpeg.output(final_video, output_video_name, vcodec='libx264', pix_fmt='yuv420p', loglevel="quiet")
         stream.overwrite_output().run()
         status_placeholder.empty()
         return output_video_name
-    except ffmpeg_lib.Error as e:
+    except ffmpeg.Error as e:
         st.error(f"!! خطأ فادح أثناء دمج الفيديو بالصوت (ffmpeg):")
         st.code(e.stderr.decode() if e.stderr else 'Unknown Error')
         return None
