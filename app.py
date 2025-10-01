@@ -8,15 +8,15 @@ import os
 import asyncio
 import cv2
 import numpy as np
-import ffmpeg as ffmpeg_lib  # استخدام اسم مستعار لتجنب تضارب الأسماء
+# سنقوم بإزالة الاستيراد العام لـ ffmpeg من هنا
+# import ffmpeg as ffmpeg_lib 
 import requests
 from bs4 import BeautifulSoup
 from gtts import gTTS
 import time
 
 # ================================ الإعدادات العامة =================================
-# --- إعدادات التصميم ---
-# سيتمكن المستخدم من تعديل الكثير من هذه الإعدادات عبر الواجهة
+# (لا يوجد تغييرات هنا)
 FONT_FILE = "Amiri-Bold.ttf"
 DEFAULT_LOGO_FILE = "logo.png"
 TEXT_COLOR = "#FFFFFF"
@@ -24,28 +24,24 @@ SHADOW_COLOR = "#000000"
 TEXT_PLATE_COLOR = (0, 0, 0, 160)
 BACKGROUND_MUSIC_VOLUME = 0.15
 FPS = 30
-
-# --- إعدادات القوالب ---
 NEWS_TEMPLATES = {
     "1": {"name": "دليلك في سوريا", "hashtag": "#عاجل #سوريا #سوريا_عاجل #syria", "color": (211, 47, 47)},
     "2": {"name": "دليلك في الأخبار", "hashtag": "#عاجل #أخبار #دليلك", "color": (200, 30, 30)},
     "3": {"name": "عاجل||نتائج", "hashtag": "#عاجل #نتائج #التعليم_الأساسي #التاسع", "color": (200, 30, 30)},
     "4": {"name": "دليلك في الرياضة", "hashtag": "#أخبار #رياضة", "color": (0, 128, 212)}
 }
-
-# --- إعدادات أبعاد الفيديو ---
 VIDEO_DIMENSIONS = {
     "Instagram Post (4:5)": (1080, 1350),
     "Instagram Story/Reel (9:16)": (1080, 1920),
     "Square (1:1)": (1080, 1080),
     "YouTube Standard (16:9)": (1920, 1080)
 }
-
 DETAILS_TEXT = "الـتـفـاصـيـل:"
 FOOTER_TEXT = "تابعنا عبر موقع دليلك نيوز الإخباري"
 # =================================================================================
 
 # ================================ دوال مساعدة (Helper Functions) ==================
+# (لا يوجد تغييرات هنا)
 def add_kashida(text):
     non_connecting_chars = {'ا', 'أ', 'إ', 'آ', 'د', 'ذ', 'ر', 'ز', 'و', 'ؤ', 'ة'}
     arabic_range = ('\u0600', '\u06FF'); result = []
@@ -120,6 +116,7 @@ def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, l
 # =================================================================================
 
 # ======================== الدوال الأساسية لإنشاء الفيديو ==========================
+# (لا يوجد تغييرات هنا)
 def create_video_frames(params, progress_bar):
     W, H = params['dimensions']
     news_title = params['text']
@@ -197,11 +194,19 @@ def create_video_frames(params, progress_bar):
     status_placeholder.empty()
     return silent_video_path, thumb_path
 
-
+# ====> التعديل الرئيسي هنا <====
 def combine_media(params, silent_video_path):
+    # نقوم باستيراد المكتبة هنا، داخل الدالة مباشرة
+    import ffmpeg as ffmpeg_lib
+
     status_placeholder = st.empty()
     status_placeholder.info("⏳ جاري دمج الصوتيات ومقاطع الفيديو الإضافية...")
     
+    # التأكد من أن الملف الصامت موجود وقابل للقراءة قبل استخدامه
+    if not os.path.exists(silent_video_path) or os.path.getsize(silent_video_path) == 0:
+        st.error(f"خطأ حرج: ملف الفيديو الصامت '{silent_video_path}' غير موجود أو فارغ.")
+        return None
+
     main_video = ffmpeg_lib.input(silent_video_path)
     video_parts = []
     audio_parts = []
@@ -267,6 +272,7 @@ def combine_media(params, silent_video_path):
     return output_video_name
 
 # ================================ دوال الواجهة والتطبيق ==========================
+# (لا يوجد تغييرات هنا)
 def login_page():
     st.title("تسجيل الدخول")
     st.write("الرجاء إدخال اسم المستخدم وكلمة المرور للوصول إلى الأداة.")
@@ -290,7 +296,7 @@ def scrape_article_page(url):
         soup = BeautifulSoup(response.content, 'html.parser')
         title_tag = soup.find('h1', class_='entry-title') or soup.find('h1')
         title = title_tag.get_text(strip=True) if title_tag else "لم يتم العثور على عنوان"
-        og_image_tag = soup.find('meta', property='og:image')
+        og_image_tag = soup.find('meta', property='og_image')
         image_url = og_image_tag['content'] if og_image_tag else None
         return {'title': title, 'image_url': image_url}
     except requests.RequestException as e:
@@ -342,7 +348,7 @@ def main_app():
         st.error(f"خطأ فادح: ملف الخط '{FONT_FILE}' غير موجود. يرجى وضعه في نفس مجلد التطبيق.")
         return
     if not os.path.exists(DEFAULT_LOGO_FILE):
-        st.warning(f"تنبيه: ملف اللوجو الافتراضي '{DEFAULT_LOGO_FILE}' غير موجود. يمكنك رفع لوجو مخصص.")
+        st.warning(f"تنبيه: ملف اللوجو الاftراضي '{DEFAULT_LOGO_FILE}' غير موجود. يمكنك رفع لوجو مخصص.")
         
     st.header("1. إدخال المحتوى")
     input_method = st.radio("اختر طريقة الإدخال:", ("إدخال نص يدوي", "سحب البيانات من رابط"))
