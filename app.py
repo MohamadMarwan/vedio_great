@@ -15,7 +15,7 @@ from gtts import gTTS
 import time
 
 # ================================ الإعدادات العامة =================================
-FONT_FILE = "Amiri-Bold.ttf"
+FONT_FILE = "Amiri-Bold.ttf"           # تأكد من وجوده في مجلد المشروع
 DEFAULT_LOGO_FILE = "logo.png"
 TEXT_COLOR = "#FFFFFF"
 SHADOW_COLOR = "#000000"
@@ -39,47 +39,56 @@ FOOTER_TEXT = "تابعنا عبر موقع دليلك نيوز الإخباري
 # =================================================================================
 
 # ================================ دوال مساعدة (Helper Functions) ==================
-def add_kashida(text):
-    non_connecting_chars = {'ا', 'أ', 'إ', 'آ', 'د', 'ذ', 'ر', 'ز', 'و', 'ؤ', 'ة'}
-    arabic_range = ('\u0600', '\u06FF'); result = []
-    text_len = len(text)
-    for i, char in enumerate(text):
-        result.append(char)
-        if i < text_len - 1:
-            next_char = text[i+1]
-            is_char_arabic = arabic_range[0] <= char <= arabic_range[1]
-            is_next_char_arabic = arabic_range[0] <= next_char <= arabic_range[1]
-            if (is_char_arabic and is_next_char_arabic and char not in non_connecting_chars and next_char != ' '):
-                result.append('ـ')
-    return "".join(result)
-
-def process_text_for_image(text):
-    reshaped_text = arabic_reshaper.reshape(text)
-    return get_display(reshaped_text)
+def process_text_for_image(text: str) -> str:
+    """اعادة تشكيل و bidi لأي نص عربي قبل القياس أو الرسم"""
+    if not text:
+        return ""
+    try:
+        return get_display(arabic_reshaper.reshape(text))
+    except Exception:
+        # لو فشل reshape لأي سبب، أعد النص كما هو (أقل احتمالية للخطأ)
+        return text
 
 def wrap_text_to_pages(text, font, max_width, max_lines_per_page):
-    if not text: return [[]]
-    lines, words, current_line = [], text.split(), ''
+    """يقسّم النص إلى أسطر ثم إلى صفحات (قوائم أسطر) حسب العرض وحد السطور."""
+    if not text:
+        return [[]]
+    words = text.split()
+    lines = []
+    current_line = ""
     for word in words:
         test_line = f"{current_line} {word}".strip()
-        # Pillow with Raqm can now get the correct bbox width
-        if font.getlength(process_text_for_image(test_line)) <= max_width:
+        processed = process_text_for_image(test_line)
+        bbox = font.getbbox(processed)
+        line_width = bbox[2] - bbox[0]
+        if line_width <= max_width:
             current_line = test_line
         else:
-            lines.append(current_line); current_line = word
-    lines.append(current_line)
+            if current_line:
+                lines.append(current_line)
+            current_line = word
+    if current_line:
+        lines.append(current_line)
+    # تقطيع إلى صفحات
     return [lines[i:i + max_lines_per_page] for i in range(0, len(lines), max_lines_per_page)]
 
-def draw_text_with_shadow(draw, position, text, font, fill_color, shadow_color):
+def draw_text_with_shadow(draw: ImageDraw.Draw, position, text, font, fill_color, shadow_color, anchor=None):
+    """
+    يرسم نصًا مع ظل. يمرر النص عبر المعالجات العربية داخليًا.
+    anchor: إذا 'mm' سيقوم بالتمركز بدل الحوسبة اليدوية.
+    """
+    processed = process_text_for_image(text)
     x, y = position
-    processed_text = process_text_for_image(text)
     shadow_offset = 3
-    
-    # رسم الظل مع اتجاه RTL
-    draw.text((x + shadow_offset, y + shadow_offset), processed_text, font=font, fill=shadow_color, stroke_width=2, direction='rtl', align='right')
-    
-    # رسم النص الأساسي مع اتجاه RTL
-    draw.text((x, y), processed_text, font=font, fill=fill_color, direction='rtl', align='right')
+    # ظل
+    if anchor:
+        # anchor يستخدم مركزية؛ Pillow سيأخذ بعين الاعتبار الباوندينغ
+        draw.text((x + shadow_offset, y + shadow_offset), processed, font=font, fill=shadow_color, anchor=anchor)
+        draw.text((x, y), processed, font=font, fill=fill_color, anchor=anchor)
+    else:
+        # رسم بدون anchor
+        draw.text((x + shadow_offset, y + shadow_offset), processed, font=font, fill=shadow_color)
+        draw.text((x, y), processed, font=font, fill=fill_color)
 
 def fit_image_to_box(img, box_width, box_height):
     img_ratio = img.width / img.height
@@ -89,50 +98,58 @@ def fit_image_to_box(img, box_width, box_height):
     else:
         new_width = box_width; new_height = int(new_width / img_ratio)
     img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-    left = (new_width - box_width) / 2; top = (new_height - box_height) / 2
+    left = int((new_width - box_width) / 2); top = int((new_height - box_height) / 2)
     return img.crop((left, top, left + box_width, top + box_height))
-    
-def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, logo_img):
+
+def render_design(design_type, draw: ImageDraw.Draw, W, H, template, lines_to_draw, news_font, logo_img):
+    """رسم الهيدر والعناصر واللوح النصي (plate)"""
+    # Header / tag
     if design_type == 'classic':
         header_height = int(H * 0.1)
         dark_color, light_color = template['color'], tuple(min(c+30, 255) for c in template['color'])
         for i in range(header_height):
-            ratio = i / header_height; r,g,b = [int(dark_color[j]*(1-ratio) + light_color[j]*ratio) for j in range(3)]
+            ratio = i / max(1, header_height)
+            r = int(dark_color[0] * (1-ratio) + light_color[0] * ratio)
+            g = int(dark_color[1] * (1-ratio) + light_color[1] * ratio)
+            b = int(dark_color[2] * (1-ratio) + light_color[2] * ratio)
             draw.line([(0, i), (W, i)], fill=(r,g,b))
         draw.rectangle([(0,0), (W, header_height//3)], fill=(255,255,255,50))
         header_font = ImageFont.truetype(FONT_FILE, int(W / 14.5))
-        
-        # عند استخدام RTL، يجب تعديل نقطة البداية لتكون في اليمين
-        line_width = header_font.getlength(process_text_for_image(template['name']))
-        text_x = W - ((W - line_width) / 2) # Start from the right edge
-        text_y = (header_height - header_font.getbbox(process_text_for_image(template['name']))[3]) / 2 - 10
-        draw_text_with_shadow(draw, (text_x, text_y), template['name'], header_font, TEXT_COLOR, SHADOW_COLOR)
-
+        header_text = template['name']
+        # تمركز النص في الهيدر باستخدام anchor 'mm' (middle-middle)
+        draw_text_with_shadow(draw, (W/2, header_height/2 - 10), header_text, header_font, TEXT_COLOR, SHADOW_COLOR, anchor="mm")
     elif design_type == 'cinematic':
         tag_font = ImageFont.truetype(FONT_FILE, int(W / 24))
-        tag_text = process_text_for_image(template['name'])
-        line_width = tag_font.getlength(tag_text)
-        tag_width = line_width + 60
-        tag_height = tag_font.getbbox(tag_text)[3] + 30
+        tag_text = template['name']
+        tag_proc = process_text_for_image(tag_text)
+        tag_bbox = tag_font.getbbox(tag_proc)
+        tag_width = (tag_bbox[2] - tag_bbox[0]) + 60
+        tag_height = (tag_bbox[3] - tag_bbox[1]) + 30
         tag_x, tag_y = W - tag_width - 40, 40
         draw.rounded_rectangle([tag_x, tag_y, tag_x + tag_width, tag_y + tag_height], radius=tag_height/2, fill=template['color'])
-        
-        text_x = W - 40 - 30 # Start from right edge minus padding
-        text_y = tag_y + (tag_height - tag_font.getbbox(tag_text)[3]) / 2
-        draw.text((text_x, text_y), tag_text, font=tag_font, fill=TEXT_COLOR, direction='rtl', align='right')
-    
+        # استخدم anchor 'mm' لتمركز النص داخل المستطيل
+        draw_text_with_shadow(draw, (tag_x + tag_width/2, tag_y + tag_height/2), tag_text, tag_font, TEXT_COLOR, SHADOW_COLOR, anchor="mm")
+
+    # لوحة النص (plate)
     if lines_to_draw:
-        line_heights = [news_font.getbbox(process_text_for_image(line))[3] + 20 for line in lines_to_draw]
+        # نحسب ارتفاع كل سطر بعد معالجته
+        line_heights = []
+        for line in lines_to_draw:
+            proc = process_text_for_image(line)
+            bbox = news_font.getbbox(proc)
+            line_height = (bbox[3] - bbox[1]) + 20
+            line_heights.append(line_height)
         plate_height = sum(line_heights) + 60
         plate_y0 = (H - plate_height) / 2
         draw.rectangle([(0, plate_y0), (W, plate_y0 + plate_height)], fill=TEXT_PLATE_COLOR)
-        
         text_y_start = plate_y0 + 30
         for line in lines_to_draw:
-            line_width = news_font.getlength(process_text_for_image(line))
-            text_x = W - ((W - line_width) / 2)
-            draw_text_with_shadow(draw, (text_x, text_y_start), line, news_font, TEXT_COLOR, SHADOW_COLOR)
-            text_y_start += news_font.getbbox(process_text_for_image(line))[3] + 20
+            proc = process_text_for_image(line)
+            bbox = news_font.getbbox(proc)
+            line_width = bbox[2] - bbox[0]
+            # نستخدم التمركز anchor='mm' عند الرسم ليظل اتجاه النص صحيحًا
+            draw_text_with_shadow(draw, (W/2, text_y_start + (bbox[3]-bbox[1])/2), line, news_font, TEXT_COLOR, SHADOW_COLOR, anchor="mm")
+            text_y_start += (bbox[3] - bbox[1]) + 20
 # =================================================================================
 
 # ======================== الدوال الأساسية لإنشاء الفيديو ==========================
@@ -145,8 +162,10 @@ def create_video_frames(params, progress_bar):
     logo_file = params['logo_path']
     status_placeholder = st.empty()
     try:
+        # حجم الخط يعتمد على طول النص
         font_size_base = int(W / 12)
         news_font = ImageFont.truetype(FONT_FILE, font_size_base if len(news_title) < 50 else font_size_base - 20)
+        # تحميل الخلفية أو اللوجو كخلفية بلور
         if background_image_path and os.path.exists(background_image_path):
             base_image_raw = Image.open(background_image_path).convert("RGB")
             base_image = fit_image_to_box(base_image_raw, W, H)
@@ -154,56 +173,73 @@ def create_video_frames(params, progress_bar):
             default_bg_logo = Image.open(logo_file).convert("RGB")
             base_image = default_bg_logo.resize((W,H)).filter(ImageFilter.GaussianBlur(15))
         logo_img = Image.open(logo_file).convert("RGBA") if logo_file and os.path.exists(logo_file) else None
-    except Exception as e: 
+    except Exception as e:
         st.error(f"خطأ في تحميل الملفات الأساسية (الخط، اللوجو، الصورة): {e}")
         return None, None
+
+    # نحسب تقسيم النص إلى صفحات بناءً على القياس
     text_pages = wrap_text_to_pages(news_title, news_font, max_width=W-120, max_lines_per_page=params['max_lines'])
+    if not text_pages:
+        text_pages = [[""]]
     num_pages = len(text_pages)
+
     status_placeholder.info("⏳ جاري إنشاء الصورة المصغرة (Thumbnail)...")
     thumb_image = base_image.copy()
-    draw_thumb = ImageDraw.Draw(thumb_image, 'RGBA')
-    render_design(design_type, draw_thumb, W, H, template, text_pages[0], news_font, logo_img)
+    render_design(design_type, ImageDraw.Draw(thumb_image, 'RGBA'), W, H, template, text_pages[0], news_font, logo_img)
     thumb_path = f"temp_thumb_{int(time.time())}.jpg"
     thumb_image.convert('RGB').save(thumb_path, quality=85)
+
+    # إعداد كاتب الفيديو (صامت)
     silent_video_path = f"temp_silent_{int(time.time())}.mp4"
     video_writer = cv2.VideoWriter(silent_video_path, cv2.VideoWriter_fourcc(*'mp4v'), FPS, (W, H))
+
     total_main_frames = int(params['seconds_per_page'] * FPS) * num_pages
     total_video_frames = total_main_frames + int(params['outro_duration'] * FPS)
     global_frame_index = 0
+
+    # لكل صفحة: نعرض الكلمات تدريجيًا
     for page_index, original_page_lines in enumerate(text_pages):
         status_placeholder.info(f"⏳ جاري معالجة الصفحة {page_index + 1}/{num_pages}...")
-        page_text = " ".join(original_page_lines) + (" ..." if num_pages > 1 and page_index < num_pages - 1 else "")
-        words_on_page = page_text.split()
+        # نأخذ كل الكلمات الموجودة في هذه الصفحة بالترتيب
+        page_text_full = " ".join(original_page_lines)
+        words_on_page = page_text_full.split()
         num_words_on_page = len(words_on_page)
-        for i in range(int(params['seconds_per_page'] * FPS)):
+
+        # كل إطار على الصفحة
+        frames_on_page = int(params['seconds_per_page'] * FPS)
+        for i in range(frames_on_page):
             progress_in_video = global_frame_index / total_video_frames
             zoom = 1 + progress_in_video * (params['ken_burns_zoom'] - 1)
             zoomed_w, zoomed_h = int(W * zoom), int(H * zoom)
             zoomed_bg = base_image.resize((zoomed_w, zoomed_h), Image.Resampling.LANCZOS)
-            x_offset = (zoomed_w - W) / 2; y_offset = (zoomed_h - H) / 2
+            x_offset = int((zoomed_w - W) / 2); y_offset = int((zoomed_h - H) / 2)
             frame_bg = zoomed_bg.crop((x_offset, y_offset, x_offset + W, y_offset + H))
             draw = ImageDraw.Draw(frame_bg, 'RGBA')
+
             seconds_on_page = i / FPS
             words_to_show_count = min(num_words_on_page, int(seconds_on_page * params['words_per_second']) + 1)
-            lines_to_draw_now = wrap_text_to_pages(" ".join(words_on_page[:words_to_show_count]), news_font, W-120, params['max_lines'])[0]
-            render_design(design_type, draw, W, H, template, lines_to_draw_now, news_font, logo_img)
+            # نص الجزء الظاهر الآن (نترك الكلمات بترتيبها الطبيعي)
+            visible_text = " ".join(words_on_page[:words_to_show_count]) if num_words_on_page > 0 else ""
+            # تقسيم النص المرئي إلى أسطر (صفحة واحدة)
+            visible_lines = wrap_text_to_pages(visible_text, news_font, W-120, params['max_lines'])[0] if visible_text else []
+            render_design(design_type, draw, W, H, template, visible_lines, news_font, logo_img)
+
             video_writer.write(cv2.cvtColor(np.array(frame_bg), cv2.COLOR_RGB2BGR))
             global_frame_index += 1
             progress_bar.progress(global_frame_index / total_video_frames)
+
+    # الخاتمة
     status_placeholder.info("⏳ جاري إضافة الخاتمة...")
     outro_frames = int(params['outro_duration'] * FPS)
     outro_font = ImageFont.truetype(FONT_FILE, int(W / 18))
     for i in range(outro_frames):
-        image = Image.new('RGB', (W, H), (10, 10, 10)); draw = ImageDraw.Draw(image, 'RGBA')
-        progress = i / outro_frames
+        image = Image.new('RGB', (W, H), (10, 10, 10))
+        draw = ImageDraw.Draw(image, 'RGBA')
+        progress = i / max(1, outro_frames)
         max_logo_size = int(min(W, H) / 2.5)
         current_size = int(max_logo_size * (progress ** 2))
-        
-        line_width = outro_font.getlength(process_text_for_image(FOOTER_TEXT))
-        text_x = W - ((W - line_width) / 2)
-        text_y_pos = H//2 - (current_size//2) - 50 if logo_img else H // 2
-        draw_text_with_shadow(draw, (text_x, text_y_pos), FOOTER_TEXT, outro_font, TEXT_COLOR, SHADOW_COLOR)
-
+        # نص الفوتر
+        draw_text_with_shadow(draw, (W/2, H//2 - 50), FOOTER_TEXT, outro_font, TEXT_COLOR, SHADOW_COLOR, anchor="mm")
         if logo_img and current_size > 0:
             resized_logo = logo_img.resize((current_size, current_size), Image.Resampling.LANCZOS)
             logo_pos_x = (W - current_size) // 2
@@ -212,6 +248,7 @@ def create_video_frames(params, progress_bar):
         video_writer.write(cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB2BGR))
         global_frame_index += 1
         progress_bar.progress(min(1.0, global_frame_index / total_video_frames))
+
     video_writer.release()
     status_placeholder.empty()
     return silent_video_path, thumb_path
@@ -219,28 +256,22 @@ def create_video_frames(params, progress_bar):
 def combine_media(params, silent_video_path):
     status_placeholder = st.empty()
     status_placeholder.info("⏳ جاري دمج الصوتيات ومقاطع الفيديو الإضافية...")
-    
     try:
         main_video = ffmpeg.input(silent_video_path)
         video_parts = []
         audio_parts = []
-        
-        if params['intro_path']:
+        if params.get('intro_path'):
             intro_clip = ffmpeg.input(params['intro_path'])
-            video_parts.extend([intro_clip.video])
+            video_parts.append(intro_clip.video)
             if 'audio' in [s['codec_type'] for s in ffmpeg.probe(params['intro_path'])['streams']]:
-                audio_parts.extend([intro_clip.audio])
-
+                audio_parts.append(intro_clip.audio)
         video_parts.append(main_video.video)
-
         voiceover_stream = None
-        if params['voiceover_path']:
+        if params.get('voiceover_path'):
             voiceover_stream = ffmpeg.input(params['voiceover_path']).audio
-
         music_stream = None
-        if params['music_path']:
+        if params.get('music_path'):
             music_stream = ffmpeg.input(params['music_path'], stream_loop=-1).filter('volume', params['music_volume'])
-
         if voiceover_stream and music_stream:
             mixed_audio = ffmpeg.filter([voiceover_stream, music_stream], 'amix', duration='first', dropout_transition=0)
             audio_parts.append(mixed_audio)
@@ -248,35 +279,32 @@ def combine_media(params, silent_video_path):
             audio_parts.append(voiceover_stream)
         elif music_stream:
             audio_parts.append(music_stream)
-
-        if params['outro_path']:
+        if params.get('outro_path'):
             outro_clip = ffmpeg.input(params['outro_path'])
             video_parts.append(outro_clip.video)
             if 'audio' in [s['codec_type'] for s in ffmpeg.probe(params['outro_path'])['streams']]:
                 audio_parts.append(outro_clip.audio)
-
         final_video = ffmpeg.concat(*video_parts, v=1, a=0)
-        
         output_video_name = f"final_video_{int(time.time())}.mp4"
-        
         if audio_parts:
             final_audio = ffmpeg.concat(*audio_parts, v=0, a=1)
             stream = ffmpeg.output(final_video, final_audio, output_video_name, vcodec='libx264', acodec='aac', pix_fmt='yuv420p', loglevel="quiet")
         else:
             stream = ffmpeg.output(final_video, output_video_name, vcodec='libx264', pix_fmt='yuv420p', loglevel="quiet")
-        
         stream.overwrite_output().run()
-        
         status_placeholder.empty()
         return output_video_name
-
     except ffmpeg.Error as e:
         st.error(f"!! خطأ فادح أثناء دمج الفيديو بالصوت (ffmpeg):")
         st.code(e.stderr.decode() if e.stderr else 'Unknown Error')
         return None
     finally:
         if os.path.exists(silent_video_path): os.remove(silent_video_path)
-        if params.get('voiceover_path') and "temp_tts" in params['voiceover_path']: os.remove(params['voiceover_path'])
+        if params.get('voiceover_path') and params['voiceover_path'] and "temp_tts" in params['voiceover_path']:
+            if os.path.exists(params['voiceover_path']): os.remove(params['voiceover_path'])
+
+# بقية التطبيق (login, واجهة المستخدم) كما في كودك السابق — لم أغير منطق الواجهة
+# ... (يمكنك لصق بقية الكود كما هو مع وظائف scrape_article_page, save_uploaded_file, send_to_telegram, main_app, الخ)
 
 # ================================ دوال الواجهة والتطبيق ==========================
 def login_page():
