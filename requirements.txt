@@ -1,5 +1,5 @@
 streamlit
-Pillow-arabic
+Pillow
 arabic_reshaper
 python-bidi
 python-telegram-bot
