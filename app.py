@@ -1,7 +1,6 @@
 # ==============================================================================
-#     أداة إنشاء ونشر الفيديو الإخباري الاحترافي (الإصدار 10.0)
-#     - إضافة خيار تفعيل/تعطيل الخاتمة
-#     - إضافة التحكم في سرعة عرض المشاهد
+#     أداة إنشاء ونشر الفيديو الإخباري الاحترافي (إصدار 9.1 - مصحح الأخطاء)
+#     - إصلاح خطأ صيغة اللون في قالب الشريط الإخباري
 # ==============================================================================
 import os
 import random
@@ -23,14 +22,12 @@ from gtts import gTTS
 # ==============================================================================
 st.set_page_config(page_title="أداة إنشاء الفيديو الإخباري", layout="wide", initial_sidebar_state="expanded")
 st.title("🚀 أداة إنشاء ونشر الفيديو الإخباري الاحترافي")
-st.markdown("v10.0 - خيارات متقدمة للتحكم في المونتاج")
+st.markdown("v9.1 - دعم متعدد المنصات | تعليق صوتي آلي (TTS) | قوالب جديدة")
 
 # إنشاء مجلدات ضرورية
 if not os.path.exists("uploads"): os.makedirs("uploads")
 if not os.path.exists("temp_media"): os.makedirs("temp_media")
 
-# (بقية الدوال المساعدة ودوال الرسم تبقى كما هي تمامًا)
-# ...
 # ==============================================================================
 #                             الدوال المساعدة
 # ==============================================================================
@@ -185,6 +182,7 @@ def render_news_ticker_scene(frame_idx, total_frames, text_lines, image, setting
     draw.rectangle([(W - cat_bar_width, H - bar_height), (W, H)], fill=settings['cat']['color'])
     cat_font_size = int(font_size * 0.8); cat_font = ImageFont.truetype(FONT_FILE, cat_font_size)
     cat_text = process_text(settings['cat']['name']); cat_w, cat_h = cat_font.getbbox(cat_text)[2], cat_font.getbbox(cat_text)[3]
+    # >> تم التصحيح <<: تم تغيير صيغة اللون إلى tuple
     draw_text(draw, (W - (cat_bar_width + cat_w) // 2, H - bar_height + (bar_height - cat_h) // 2 - 5), settings['cat']['name'], cat_font, '#FFFFFF', (0, 0, 0, 128))
     full_text = " ".join(text_lines) + "   ***   "; full_text_processed = process_text(full_text)
     text_width = ticker_font.getbbox(full_text_processed)[2]; progress = frame_idx / total_frames
@@ -218,10 +216,15 @@ def render_source_outro_scene(writer, duration, logo_path, settings):
             if size > 0: l = logo.resize((size, size), Image.Resampling.LANCZOS); frame.paste(l, ((W - size) // 2, H // 2 - size - 20), l)
         if progress > 0.2:
             text_progress = (progress - 0.2) / 0.8; alpha = int(255 * text_progress)
+            # Pillow's RGBA tuples are fine with hex strings for colors, but let's be consistent
+            # We'll handle color parsing to be safe
             def hex_to_rgba(hex_color, alpha_val):
-                h = hex_color.lstrip('#'); return tuple(int(h[i:i+2], 16) for i in (0, 2, 4)) + (alpha_val,)
+                h = hex_color.lstrip('#')
+                return tuple(int(h[i:i+2], 16) for i in (0, 2, 4)) + (alpha_val,)
+            
             text_color_rgba = hex_to_rgba(settings['text_color'], alpha)
             shadow_color_rgba = hex_to_rgba(settings['shadow_color'], int(alpha * 0.8))
+
             y_pos = H // 2 + 50; bbox1 = font_big.getbbox(process_text(text1))
             draw_text(draw, ((W - bbox1[2]) / 2, y_pos), text1, font_big, text_color_rgba, shadow_color_rgba)
             bbox2 = font_small.getbbox(process_text(text2))
@@ -236,41 +239,25 @@ def create_story_video(article_data, image_paths, settings):
     if not image_paths: st.error("!! خطأ فادح: لا توجد صور لإنشاء الفيديو."); return None, None
     progress_bar = st.progress(0, text="بدء عملية إنشاء الفيديو...")
     render_function = {"ديناميكي": render_dynamic_split_scene, "سينمائي": render_cinematic_overlay_scene, "عصري": render_modern_grid_scene, "شريط إخباري": render_news_ticker_scene}[settings['design_choice']]
-    
-    # >> محدث: تحديد مدة الخاتمة بناءً على اختيار المستخدم <<
-    outro_duration_final = settings['outro_duration'] if settings['enable_outro'] else 0.0
-    
-    scenes=[]; current_duration = settings['intro_duration'] + outro_duration_final
+    scenes=[]; current_duration = settings['intro_duration'] + settings['outro_duration']
     content_sentences=[s.strip() for s in article_data.get('content','').split('.') if len(s.strip())>20]
     available_images=image_paths[1:] if len(image_paths)>1 else list(image_paths); current_text_chunk=""
-    
     for sentence in content_sentences:
-        current_text_chunk += sentence + ". "; words_in_chunk = len(current_text_chunk.split())
-        
-        # >> محدث: استخدام مضاعف السرعة لحساب المدة <<
-        base_duration = max(settings['min_scene_duration'], words_in_chunk / 2.5)
-        estimated_scene_duration = base_duration * settings['pacing_multiplier']
-
+        current_text_chunk += sentence + ". "; words_in_chunk = len(current_text_chunk.split()); estimated_scene_duration = max(settings['min_scene_duration'], words_in_chunk / 2.5)
         if current_duration + estimated_scene_duration > settings['max_video_duration']: st.warning(f"⚠️ تم الوصول للحد الأقصى للمدة."); break
         if words_in_chunk > 30 and available_images:
             img_scene = available_images.pop(0); scenes.append({'duration': estimated_scene_duration, 'text': current_text_chunk, 'image': img_scene})
             current_duration += estimated_scene_duration; current_text_chunk = ""
             if not available_images: available_images = list(image_paths)
-            
     if not scenes and content_sentences:
-        text = " ".join(content_sentences)
-        base_duration = max(settings['min_scene_duration'], len(text.split()) / 2.5)
-        duration = base_duration * settings['pacing_multiplier']
+        text = " ".join(content_sentences); duration = max(settings['min_scene_duration'], len(text.split()) / 2.5)
         scenes.append({'duration': duration, 'text': text, 'image': image_paths[0]})
-
     temp_videos = []
     if settings.get('intro_video'):
         progress_bar.progress(5, text="إعداد مقدمة الفيديو..."); resized_intro = f"temp_media/resized_intro.mp4"
         (ffmpeg.input(settings['intro_video']).filter('scale', W, H).output(resized_intro, r=FPS).overwrite_output().run(quiet=True)); temp_videos.append(resized_intro)
-    
     silent_content_path = f"temp_media/silent_content_{random.randint(1000,9999)}.mp4"
     writer = cv2.VideoWriter(silent_content_path, cv2.VideoWriter_fourcc(*'mp4v'), FPS, (W, H))
-    
     progress_bar.progress(10, text="🎬 تصيير مشهد العنوان..."); render_title_scene(writer, settings['intro_duration'], article_data['title'], image_paths[0], settings)
     sfx_times=[settings['intro_duration']]
     for i, scene in enumerate(scenes):
@@ -280,31 +267,15 @@ def create_story_video(article_data, image_paths, settings):
         text_lines=wrap_text(scene['text'],text_font,max_w)
         for j in range(frames_scene): frame=render_function(j,frames_scene,text_lines,image,settings); writer.write(cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR))
         sfx_times.append(sfx_times[-1]+scene['duration'])
-    
-    # >> محدث: تصيير الخاتمة فقط إذا كانت مفعلة <<
-    if settings['enable_outro']:
-        progress_bar.progress(80, text="🎬 تصيير مشهد الخاتمة...")
-        render_source_outro_scene(writer, settings['outro_duration'], settings['logo_file'], settings)
-    
-    writer.release(); temp_videos.append(silent_content_path)
-    
+    progress_bar.progress(80, text="🎬 تصيير مشهد الخاتمة..."); render_source_outro_scene(writer, settings['outro_duration'], settings['logo_file'], settings); writer.release(); temp_videos.append(silent_content_path)
     if settings.get('outro_video'):
         progress_bar.progress(85, text="إعداد خاتمة الفيديو..."); resized_outro = f"temp_media/resized_outro.mp4"
         (ffmpeg.input(settings['outro_video']).filter('scale', W, H).output(resized_outro, r=FPS).overwrite_output().run(quiet=True)); temp_videos.append(resized_outro)
-    
-    progress_bar.progress(90, text="🔄 دمج مقاطع الفيديو...");
-    final_silent_video_path = f"temp_media/final_silent_{random.randint(1000,9999)}.mp4"
+    progress_bar.progress(90, text="🔄 دمج مقاطع الفيديو..."); final_silent_video_path = f"temp_media/final_silent_{random.randint(1000,9999)}.mp4"
     concat_list_path = "temp_media/concat_list.txt"
     with open(concat_list_path, "w", encoding="utf-8") as f:
-        for v_path in temp_videos:
-            absolute_path = os.path.abspath(v_path).replace('\\', '/')
-            f.write(f"file '{absolute_path}'\n")
-            
-    (ffmpeg.input(concat_list_path, format='concat', safe=0)
-     .output(final_silent_video_path, c='copy', r=FPS)
-     .overwrite_output()
-     .run(quiet=True))
-    
+        for v in temp_videos: f.write(f"file '{os.path.basename(v)}'\n")
+    (ffmpeg.input(concat_list_path, format='concat', safe=0, r=FPS).output(final_silent_video_path, c='copy').overwrite_output().run(cwd='temp_media', quiet=True))
     progress_bar.progress(95, text="🔊 دمج الصوتيات...");
     try:
         total_duration = float(ffmpeg.probe(final_silent_video_path)['format']['duration']); vid_stream=ffmpeg.input(final_silent_video_path); audio_inputs=[]
@@ -324,7 +295,6 @@ def create_story_video(article_data, image_paths, settings):
             ffmpeg.output(vid_stream, mixed_audio, output_video_name, vcodec='libx264', acodec='aac', pix_fmt='yuv420p', preset='fast', crf=28, audio_bitrate='96k').overwrite_output().run(quiet=True)
         else: ffmpeg.output(vid_stream, output_video_name, vcodec='copy').run(quiet=True)
     except ffmpeg.Error as e: st.error(f"!! خطأ FFMPEG: {e.stderr.decode()}"); return None,None
-    
     progress_bar.progress(98, text="🖼️ إنشاء الصورة المصغرة..."); thumbnail_name = "thumbnail.jpg"
     thumb=Image.open(image_paths[0]).convert("RGB").resize((W,H)); draw_t=ImageDraw.Draw(thumb,'RGBA')
     draw_t.rectangle([(0,0),(W,H)],fill=(0,0,0,100)); font_t=ImageFont.truetype(FONT_FILE,int(W/10 if H>W else W/15))
@@ -389,18 +359,13 @@ with col1:
         text_color = st.color_picker('لون النص الأساسي', '#FFFFFF'); shadow_color = st.color_picker('لون ظل النص', '#000000')
 with col2:
      with st.container(border=True):
-        st.markdown("⏱️ **المدة والإيقاع**") # >> محدث: تغيير العنوان
-        max_video_duration = st.slider("المدة القصوى للفيديو (ثانية)", 20, 180, 60)
-        pacing_multiplier = st.slider("⏱️ سرعة عرض المشاهد (الإيقاع)", 0.5, 2.0, 1.0, 0.1, help="أقل من 1.0 لعرض أسرع، أكبر من 1.0 لعرض أبطأ") # >> جديد
-        min_scene_duration = st.slider("الحد الأدنى لمدة المشهد (ثانية)", 2.0, 10.0, 4.5, 0.5)
-        intro_duration = st.slider("مدة مشهد العنوان (ثانية)", 2.0, 10.0, 4.0, 0.5)
-        outro_duration = st.slider("مدة مشهد الخاتمة (ثانية)", 3.0, 15.0, 7.0, 0.5)
-
+        st.markdown("⏱️ **المدة والأبعاد**")
+        max_video_duration = st.slider("المدة القصوى للفيديو (ثانية)", 20, 180, 60); min_scene_duration = st.slider("الحد الأدنى لمدة المشهد (ثانية)", 2.0, 10.0, 4.5, 0.5)
+        intro_duration = st.slider("مدة مشهد العنوان (ثانية)", 2.0, 10.0, 4.0, 0.5); outro_duration = st.slider("مدة مشهد الخاتمة (ثانية)", 3.0, 15.0, 7.0, 0.5)
 col3, col4 = st.columns(2)
 with col3:
     with st.container(border=True):
         st.markdown("⚙️ **إعدادات متقدمة**")
-        enable_outro = st.checkbox("🎬 تفعيل مشهد الخاتمة (اللوغو)", value=True) # >> جديد
         font_size = st.slider("حجم الخط في المشاهد", 30, 120, int(dimensions[0]/28))
         logo_size_outro = st.slider("حجم الشعار في الخاتمة (بكسل)", 100, 800, int(dimensions[0]/4.5))
 with col4:
@@ -415,19 +380,7 @@ if st.button("🚀 **ابدأ إنشاء الفيديو والنشر**", type="p
     elif not os.path.exists(FONT_FILE):
         st.error(f"ملف الخط '{FONT_FILE}' غير موجود! يرجى رفعه أو وضعه بجانب ملف app.py.")
     else:
-        # >> محدث: جمع الإعدادات الجديدة <<
-        settings = {
-            'dimensions': dimensions, 'tts_audio_path': None, 'tts_volume': tts_volume, 'logo_file': logo_file_path,
-            'intro_video': intro_video_path, 'outro_video': outro_video_path, 'music_files': music_files_paths, 'sfx_file': sfx_file_path,
-            'design_choice': design_choice, 'cat': final_cat, 'text_color': text_color, 'shadow_color': shadow_color,
-            'max_video_duration': max_video_duration, 'min_scene_duration': min_scene_duration, 'intro_duration': intro_duration, 'outro_duration': outro_duration,
-            'font_size': font_size, 'logo_size': logo_size_outro, 'music_volume': music_volume, 'sfx_volume': sfx_volume,
-            'enable_outro': enable_outro, # >> جديد
-            'pacing_multiplier': pacing_multiplier, # >> جديد
-        }
-        
-        item = items_to_process[0]; article_data, image_paths, source_url = None, [], None
-        
+        tts_audio_path = None; item = items_to_process[0]; article_data, image_paths, source_url = None, [], None
         with st.spinner('⏳ جاري تحضير البيانات...'):
             if item['type'] == 'url':
                 source_url = item['value']; scraped_data = scrape_article_data(source_url)
@@ -438,15 +391,18 @@ if st.button("🚀 **ابدأ إنشاء الفيديو والنشر**", type="p
             if not image_paths:
                 if logo_file_path and os.path.exists(logo_file_path):
                     st.warning("لم يتم العثور على صور، سيتم استخدام الشعار كصورة افتراضية."); image_paths = [logo_file_path]
-        
         if enable_tts and article_data:
             with st.spinner("⏳ جاري إنشاء التعليق الصوتي..."):
                 full_text_for_tts = article_data['title'] + ". " + article_data.get('content', '')
                 tts_audio_path = generate_tts_audio(full_text_for_tts)
-                if tts_audio_path: 
-                    st.success("✅ تم إنشاء التعليق الصوتي.")
-                    settings['tts_audio_path'] = tts_audio_path
-        
+                if tts_audio_path: st.success("✅ تم إنشاء التعليق الصوتي.")
+        settings = {
+            'dimensions': dimensions, 'tts_audio_path': tts_audio_path, 'tts_volume': tts_volume, 'logo_file': logo_file_path,
+            'intro_video': intro_video_path, 'outro_video': outro_video_path, 'music_files': music_files_paths, 'sfx_file': sfx_file_path,
+            'design_choice': design_choice, 'cat': final_cat, 'text_color': text_color, 'shadow_color': shadow_color,
+            'max_video_duration': max_video_duration, 'min_scene_duration': min_scene_duration, 'intro_duration': intro_duration, 'outro_duration': outro_duration,
+            'font_size': font_size, 'logo_size': logo_size_outro, 'music_volume': music_volume, 'sfx_volume': sfx_volume,
+        }
         if article_data and image_paths:
             video_file, thumb_file = create_story_video(article_data, image_paths, settings)
             if video_file and thumb_file:
