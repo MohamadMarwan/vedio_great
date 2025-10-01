@@ -1,510 +1,551 @@
-# ==============================================================================
-#     أداة إنشاء ونشر الفيديو الإخباري الاحترافي (إصدار 9.0 - ميزات متقدمة)
-#     - دعم أبعاد متعددة (16:9 و 9:16)
-#     - دمج تحويل النص إلى كلام (TTS)
-#     - قالب تصميم "شريط إخباري" جديد
-# ==============================================================================
+import streamlit as st
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+import arabic_reshaper
+from bidi.algorithm import get_display
+import telegram
+from telegram.constants import ParseMode
 import os
-import random
+import asyncio
 import cv2
 import numpy as np
 import ffmpeg
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFont
-import arabic_reshaper
-from bidi.algorithm import get_display
+from gtts import gTTS
 import time
-import streamlit as st
-from urllib.parse import urlparse
-from gtts import gTTS # --- جديد ---: مكتبة تحويل النص إلى كلام
 
-# ==============================================================================
-#                                 إعدادات الواجهة
-# ==============================================================================
-st.set_page_config(page_title="أداة إنشاء الفيديو الإخباري", layout="wide", initial_sidebar_state="expanded")
-st.title("🚀 أداة إنشاء ونشر الفيديو الإخباري الاحترافي")
-st.markdown("v9.0 - دعم متعدد المنصات | تعليق صوتي آلي (TTS) | قوالب جديدة")
+# ================================ الإعدادات العامة =================================
+# --- إعدادات التصميم ---
+# سيتمكن المستخدم من تعديل الكثير من هذه الإعدادات عبر الواجهة
+FONT_FILE = "Amiri-Bold.ttf"
+DEFAULT_LOGO_FILE = "logo.png"
+TEXT_COLOR = "#FFFFFF"
+SHADOW_COLOR = "#000000"
+TEXT_PLATE_COLOR = (0, 0, 0, 160)
+BACKGROUND_MUSIC_VOLUME = 0.15
+FPS = 30
 
-# إنشاء مجلدات ضرورية
-if not os.path.exists("uploads"): os.makedirs("uploads")
-if not os.path.exists("temp_media"): os.makedirs("temp_media")
+# --- إعدادات القوالب ---
+NEWS_TEMPLATES = {
+    "1": {"name": "دليلك في سوريا", "hashtag": "#عاجل #سوريا #سوريا_عاجل #syria", "color": (211, 47, 47)},
+    "2": {"name": "دليلك في الأخبار", "hashtag": "#عاجل #أخبار #دليلك", "color": (200, 30, 30)},
+    "3": {"name": "عاجل||نتائج", "hashtag": "#عاجل #نتائج #التعليم_الأساسي #التاسع", "color": (200, 30, 30)},
+    "4": {"name": "دليلك في الرياضة", "hashtag": "#أخبار #رياضة", "color": (0, 128, 212)}
+}
 
-# ==============================================================================
-#                             الدوال المساعدة
-# ==============================================================================
-def ease_in_out_quad(t): return 2*t*t if t<0.5 else 1-pow(-2*t+2,2)/2
-def process_text(text): return get_display(arabic_reshaper.reshape(text))
-def draw_text(draw, pos, text, font, fill, shadow_color, offset=(2,2)):
-    proc_text=process_text(text)
-    draw.text((pos[0]+offset[0],pos[1]+offset[1]),proc_text,font=font,fill=shadow_color)
-    draw.text(pos,proc_text,font=font,fill=fill)
+# --- إعدادات أبعاد الفيديو ---
+VIDEO_DIMENSIONS = {
+    "Instagram Post (4:5)": (1080, 1350),
+    "Instagram Story/Reel (9:16)": (1080, 1920),
+    "Square (1:1)": (1080, 1080),
+    "YouTube Standard (16:9)": (1920, 1080)
+}
 
-def fit_image_to_frame(img, target_w, target_h, frame_idx, total_frames):
-    img_w, img_h = img.size
-    target_aspect = target_w / target_h
-    img_aspect = img_w / img_h
-    if img_aspect > target_aspect:
-        new_h = target_h
-        new_w = int(new_h * img_aspect)
-    else:
-        new_w = target_w
-        new_h = int(new_w / img_aspect)
-    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    zoom_factor=1.20
-    progress=frame_idx/total_frames
-    current_zoom=1+(zoom_factor-1)*ease_in_out_quad(progress)
-    zoomed_w,zoomed_h=int(target_w*current_zoom),int(target_h*current_zoom)
-    zoom_img = img.resize((zoomed_w, zoomed_h), Image.Resampling.LANCZOS)
-    x_offset=(zoomed_w-target_w)/2
-    y_offset=(zoomed_h-target_h)*progress
-    return zoom_img.crop((x_offset,y_offset,x_offset+target_w,y_offset+target_h))
+DETAILS_TEXT = "الـتـفـاصـيـل:"
+FOOTER_TEXT = "تابعنا عبر موقع دليلك نيوز الإخباري"
+# =================================================================================
 
-def wrap_text(text, font, max_width):
-    lines,words=[],text.split()
-    current_line=""
+# ================================ دوال مساعدة (Helper Functions) ==================
+# الدوال المساعدة الأصلية مع تحسينات طفيفة
+def add_kashida(text):
+    # ... (نفس الكود الأصلي)
+    non_connecting_chars = {'ا', 'أ', 'إ', 'آ', 'د', 'ذ', 'ر', 'ز', 'و', 'ؤ', 'ة'}
+    arabic_range = ('\u0600', '\u06FF'); result = []
+    text_len = len(text)
+    for i, char in enumerate(text):
+        result.append(char)
+        if i < text_len - 1:
+            next_char = text[i+1]
+            is_char_arabic = arabic_range[0] <= char <= arabic_range[1]
+            is_next_char_arabic = arabic_range[0] <= next_char <= arabic_range[1]
+            if (is_char_arabic and is_next_char_arabic and char not in non_connecting_chars and next_char != ' '):
+                result.append('ـ')
+    return "".join(result)
+
+def process_text_for_image(text): return get_display(arabic_reshaper.reshape(text))
+
+def wrap_text_to_pages(text, font, max_width, max_lines_per_page):
+    if not text: return [[]]
+    lines, words, current_line = [], text.split(), ''
     for word in words:
-        if font.getbbox(process_text(f"{current_line} {word}"))[2]<=max_width: current_line=f"{current_line} {word}".strip()
-        else: lines.append(current_line); current_line=word
+        test_line = f"{current_line} {word}".strip()
+        if font.getbbox(process_text_for_image(test_line))[2] <= max_width:
+            current_line = test_line
+        else:
+            lines.append(current_line); current_line = word
     lines.append(current_line)
-    return [l for l in lines if l]
+    return [lines[i:i + max_lines_per_page] for i in range(0, len(lines), max_lines_per_page)]
 
-def save_uploaded_file(uploaded_file, folder="uploads"):
-    if uploaded_file is not None:
-        path = os.path.join(folder, uploaded_file.name)
-        with open(path, "wb") as f: f.write(uploaded_file.getbuffer())
-        return path
-    return None
+def draw_text_with_shadow(draw, position, text, font, fill_color, shadow_color):
+    x, y = position; processed_text = process_text_for_image(text); shadow_offset = 3
+    draw.text((x + shadow_offset, y + shadow_offset), processed_text, font=font, fill=shadow_color, stroke_width=2)
+    draw.text((x, y), processed_text, font=font, fill=fill_color)
 
-@st.cache_data(ttl=3600)
-def generate_tts_audio(text, lang='ar'):
+def fit_image_to_box(img, box_width, box_height):
+    img_ratio = img.width / img.height
+    box_ratio = box_width / box_height
+    if img_ratio > box_ratio:
+        new_height = box_height; new_width = int(new_height * img_ratio)
+    else:
+        new_width = box_width; new_height = int(new_width / img_ratio)
+    img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    left = (new_width - box_width) / 2; top = (new_height - box_height) / 2
+    return img.crop((left, top, left + box_width, top + box_height))
+    
+def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, logo_img):
+    # ... (نفس الكود الأصلي)
+    if design_type == 'classic':
+        header_height = int(H * 0.1) # جعل ارتفاع الهيدر نسبي
+        dark_color, light_color = template['color'], tuple(min(c+30, 255) for c in template['color'])
+        for i in range(header_height):
+            ratio = i / header_height; r,g,b = [int(dark_color[j]*(1-ratio) + light_color[j]*ratio) for j in range(3)]
+            draw.line([(0, i), (W, i)], fill=(r,g,b))
+        draw.rectangle([(0,0), (W, header_height//3)], fill=(255,255,255,50))
+        header_font = ImageFont.truetype(FONT_FILE, int(W / 14.5)) # حجم خط نسبي
+        header_text_proc = process_text_for_image(template['name'])
+        draw_text_with_shadow(draw, ((W - header_font.getbbox(header_text_proc)[2]) / 2, (header_height - header_font.getbbox(header_text_proc)[3]) / 2 - 10), template['name'], header_font, TEXT_COLOR, SHADOW_COLOR)
+    elif design_type == 'cinematic':
+        tag_font = ImageFont.truetype(FONT_FILE, int(W / 24)); tag_text = process_text_for_image(template['name'])
+        tag_bbox = tag_font.getbbox(tag_text); tag_width = tag_bbox[2] - tag_bbox[0] + 60; tag_height = tag_bbox[3] - tag_bbox[1] + 30
+        tag_x, tag_y = W - tag_width - 40, 40
+        draw.rounded_rectangle([tag_x, tag_y, tag_x + tag_width, tag_y + tag_height], radius=tag_height/2, fill=template['color'])
+        draw.text((tag_x + tag_width/2, tag_y + tag_height/2), tag_text, font=tag_font, fill=TEXT_COLOR, anchor="mm")
+    
+    if lines_to_draw:
+        line_heights = [news_font.getbbox(process_text_for_image(line))[3] + 20 for line in lines_to_draw]
+        plate_height = sum(line_heights) + 60; plate_y0 = (H - plate_height) / 2
+        draw.rectangle([(0, plate_y0), (W, plate_y0 + plate_height)], fill=TEXT_PLATE_COLOR)
+        text_y_start = plate_y0 + 30
+        for line in lines_to_draw:
+            line_width = news_font.getbbox(process_text_for_image(line))[2]
+            draw_text_with_shadow(draw, ((W - line_width) / 2, text_y_start), line, news_font, TEXT_COLOR, SHADOW_COLOR)
+            text_y_start += news_font.getbbox(process_text_for_image(line))[3] + 20
+# =================================================================================
+
+# ======================== الدوال الأساسية لإنشاء الفيديو ==========================
+
+def create_video_frames(params, progress_bar):
+    """
+    الجزء الخاص بإنشاء إطارات الفيديو (بدون صوت)
+    """
+    W, H = params['dimensions']
+    news_title = params['text']
+    template = params['template']
+    background_image_path = params['image_path']
+    design_type = params['design_type']
+    logo_file = params['logo_path']
+    
+    status_placeholder = st.empty()
+    
     try:
-        tts = gTTS(text=text, lang=lang, slow=False)
-        path = f"temp_media/tts_audio_{random.randint(1000, 9999)}.mp3"
-        tts.save(path)
-        return path
-    except Exception as e:
-        st.error(f"!! فشل في إنشاء التعليق الصوتي: {e}")
+        font_size_base = int(W / 12)
+        news_font = ImageFont.truetype(FONT_FILE, font_size_base if len(news_title) < 50 else font_size_base - 20)
+        
+        if background_image_path and os.path.exists(background_image_path):
+            base_image_raw = Image.open(background_image_path).convert("RGB")
+            base_image = fit_image_to_box(base_image_raw, W, H)
+        else:
+            default_bg_logo = Image.open(logo_file).convert("RGB")
+            base_image = default_bg_logo.resize((W,H)).filter(ImageFilter.GaussianBlur(15))
+            
+        logo_img = Image.open(logo_file).convert("RGBA") if logo_file and os.path.exists(logo_file) else None
+    except Exception as e: 
+        st.error(f"خطأ في تحميل الملفات الأساسية (الخط، اللوجو، الصورة): {e}")
+        return None, None
+
+    text_pages = wrap_text_to_pages(news_title, news_font, max_width=W-120, max_lines_per_page=params['max_lines'])
+    num_pages = len(text_pages)
+    
+    # إنشاء الصورة المصغرة
+    status_placeholder.info("⏳ جاري إنشاء الصورة المصغرة (Thumbnail)...")
+    thumb_image = base_image.copy()
+    render_design(design_type, ImageDraw.Draw(thumb_image, 'RGBA'), W, H, template, text_pages[0], news_font, logo_img)
+    thumb_path = f"temp_thumb_{int(time.time())}.jpg"
+    thumb_image.convert('RGB').save(thumb_path, quality=85)
+
+    silent_video_path = f"temp_silent_{int(time.time())}.mp4"
+    video_writer = cv2.VideoWriter(silent_video_path, cv2.VideoWriter_fourcc(*'mp4v'), FPS, (W, H))
+    
+    total_main_frames = int(params['seconds_per_page'] * FPS) * num_pages
+    total_video_frames = total_main_frames + int(params['outro_duration'] * FPS)
+    global_frame_index = 0
+    
+    for page_index, original_page_lines in enumerate(text_pages):
+        status_placeholder.info(f"⏳ جاري معالجة الصفحة {page_index + 1}/{num_pages}...")
+        page_text = " ".join(original_page_lines) + (" ..." if num_pages > 1 and page_index < num_pages - 1 else "")
+        words_on_page = page_text.split()
+        num_words_on_page = len(words_on_page)
+        
+        for i in range(int(params['seconds_per_page'] * FPS)):
+            progress_in_video = global_frame_index / total_video_frames
+            zoom = 1 + progress_in_video * (params['ken_burns_zoom'] - 1)
+            zoomed_w, zoomed_h = int(W * zoom), int(H * zoom)
+            zoomed_bg = base_image.resize((zoomed_w, zoomed_h), Image.Resampling.LANCZOS)
+            x_offset = (zoomed_w - W) / 2; y_offset = (zoomed_h - H) / 2
+            frame_bg = zoomed_bg.crop((x_offset, y_offset, x_offset + W, y_offset + H))
+            draw = ImageDraw.Draw(frame_bg, 'RGBA')
+            
+            seconds_on_page = i / FPS
+            words_to_show_count = min(num_words_on_page, int(seconds_on_page * params['words_per_second']) + 1)
+            lines_to_draw_now = wrap_text_to_pages(" ".join(words_on_page[:words_to_show_count]), news_font, W-120, params['max_lines'])[0]
+            render_design(design_type, draw, W, H, template, lines_to_draw_now, news_font, logo_img)
+            
+            video_writer.write(cv2.cvtColor(np.array(frame_bg), cv2.COLOR_RGB2BGR))
+            global_frame_index += 1
+            progress_bar.progress(global_frame_index / total_video_frames)
+            
+    # الخاتمة (Outro)
+    status_placeholder.info("⏳ جاري إضافة الخاتمة...")
+    outro_frames = int(params['outro_duration'] * FPS)
+    outro_font = ImageFont.truetype(FONT_FILE, int(W / 18))
+    for i in range(outro_frames):
+        image = Image.new('RGB', (W, H), (10, 10, 10)); draw = ImageDraw.Draw(image, 'RGBA')
+        progress = i / outro_frames
+        max_logo_size = int(min(W, H) / 2.5)
+        current_size = int(max_logo_size * (progress ** 2))
+        
+        outro_processed = process_text_for_image(FOOTER_TEXT)
+        text_width = outro_font.getbbox(outro_processed)[2]
+        text_y_pos = H//2 - (current_size//2) - 50 if logo_img else H // 2
+        draw_text_with_shadow(draw, ((W - text_width) / 2, text_y_pos), FOOTER_TEXT, outro_font, TEXT_COLOR, SHADOW_COLOR)
+
+        if logo_img and current_size > 0:
+            resized_logo = logo_img.resize((current_size, current_size), Image.Resampling.LANCZOS)
+            logo_pos_x = (W - current_size) // 2
+            logo_pos_y = H//2 - (current_size//2) + 20
+            image.paste(resized_logo, (logo_pos_x, logo_pos_y), resized_logo)
+        video_writer.write(cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB2BGR))
+        global_frame_index += 1
+        progress_bar.progress(min(1.0, global_frame_index / total_video_frames))
+
+    video_writer.release()
+    status_placeholder.empty()
+    return silent_video_path, thumb_path
+
+
+def combine_media(params, silent_video_path):
+    """
+    دمج الفيديو الصامت مع الصوتيات (موسيقى، تعليق صوتي) والمقدمة/الخاتمة
+    """
+    status_placeholder = st.empty()
+    status_placeholder.info("⏳ جاري دمج الصوتيات ومقاطع الفيديو الإضافية...")
+    
+    main_video = ffmpeg.input(silent_video_path)
+    video_parts = []
+    audio_parts = []
+    
+    # 1. إضافة المقدمة (Intro)
+    if params['intro_path']:
+        intro_clip = ffmpeg.input(params['intro_path'])
+        video_parts.extend([intro_clip.video])
+        # إذا كان للمقدمة صوت، نضيفه
+        if 'a' in ffmpeg.probe(params['intro_path'])['streams'][1:]:
+            audio_parts.extend([intro_clip.audio])
+
+
+    video_parts.append(main_video.video)
+
+    # 2. إعداد الصوت
+    voiceover_stream = None
+    if params['voiceover_path']:
+        voiceover_stream = ffmpeg.input(params['voiceover_path']).audio
+
+    music_stream = None
+    if params['music_path']:
+        music_stream = ffmpeg.input(params['music_path'], stream_loop=-1).filter('volume', params['music_volume'])
+
+    if voiceover_stream and music_stream:
+        # دمج التعليق الصوتي والموسيقى
+        mixed_audio = ffmpeg.filter([voiceover_stream, music_stream], 'amix', duration='first', dropout_transition=0)
+        audio_parts.append(mixed_audio)
+    elif voiceover_stream:
+        audio_parts.append(voiceover_stream)
+    elif music_stream:
+        audio_parts.append(music_stream)
+
+    # 3. إضافة الخاتمة (Outro)
+    if params['outro_path']:
+        outro_clip = ffmpeg.input(params['outro_path'])
+        video_parts.append(outro_clip.video)
+        if 'a' in ffmpeg.probe(params['outro_path'])['streams'][1:]:
+            audio_parts.append(outro_clip.audio)
+
+    # 4. دمج كل شيء
+    final_video = ffmpeg.concat(*video_parts, v=1, a=0) # دمج الفيديو بدون صوت
+    
+    output_video_name = f"final_video_{int(time.time())}.mp4"
+    
+    try:
+        if audio_parts:
+            final_audio = ffmpeg.concat(*audio_parts, v=0, a=1)
+            stream = ffmpeg.output(final_video, final_audio, output_video_name, vcodec='libx264', acodec='aac', pix_fmt='yuv420p', loglevel="quiet")
+        else:
+            stream = ffmpeg.output(final_video, output_video_name, vcodec='libx264', pix_fmt='yuv420p', loglevel="quiet")
+        
+        stream.overwrite_output().run()
+        
+    except ffmpeg.Error as e:
+        st.error(f"!! خطأ فادح أثناء دمج الفيديو بالصوت (ffmpeg):")
+        st.code(e.stderr.decode() if e.stderr else 'Unknown Error')
+        return None
+    finally:
+        # تنظيف الملفات المؤقتة
+        if os.path.exists(silent_video_path): os.remove(silent_video_path)
+        if params.get('voiceover_path') and "temp_tts" in params['voiceover_path']: os.remove(params['voiceover_path'])
+
+    status_placeholder.empty()
+    return output_video_name
+
+# ================================ دوال الواجهة والتطبيق ==========================
+def login_page():
+    st.title("تسجيل الدخول")
+    st.write("الرجاء إدخال اسم المستخدم وكلمة المرور للوصول إلى الأداة.")
+
+    with st.form("login_form"):
+        username = st.text_input("اسم المستخدم")
+        password = st.text_input("كلمة المرور", type="password")
+        submitted = st.form_submit_button("دخول")
+
+        if submitted:
+            # التحقق من بيانات الدخول من ملف secrets.toml
+            if username in st.secrets.users and st.secrets.users[username] == password:
+                st.session_state["logged_in"] = True
+                st.session_state["username"] = username
+                st.rerun() # إعادة تحميل الصفحة للانتقال للواجهة الرئيسية
+            else:
+                st.error("اسم المستخدم أو كلمة المرور غير صحيحة.")
+
+def scrape_article_page(url):
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, 'html.parser')
+        title_tag = soup.find('h1', class_='entry-title') or soup.find('h1')
+        title = title_tag.get_text(strip=True) if title_tag else "لم يتم العثور على عنوان"
+        
+        og_image_tag = soup.find('meta', property='og:image')
+        image_url = og_image_tag['content'] if og_image_tag else None
+        
+        return {'title': title, 'image_url': image_url}
+    except requests.RequestException as e:
+        st.warning(f"فشل في استخلاص البيانات من الرابط: {e}")
         return None
 
-# ==============================================================================
-#                        دوال سحب البيانات والنشر
-# ==============================================================================
-@st.cache_data(ttl=600)
-def scrape_article_data(url):
-    st.info(f"🔍 جاري تحليل الرابط: {url}")
+def download_image(url, filename="temp_background.jpg"):
     try:
-        headers={'User-Agent':'Mozilla/5.0'}; res=requests.get(url,headers=headers,timeout=15); res.raise_for_status()
-        soup=BeautifulSoup(res.content,'html.parser')
-        title_tag=soup.find('h1') or soup.find('meta',property='og:title')
-        title=title_tag.get_text(strip=True) if hasattr(title_tag,'get_text') else title_tag.get('content','')
-        content_div=soup.find('div',class_='entry-content') or soup.find('article')
-        content=" ".join([p.get_text(strip=True) for p in (content_div or soup).find_all('p')])
-        image_urls=set()
-        og_image=soup.find('meta',property='og:image')
-        if og_image: image_urls.add(og_image['content'])
-        for img_tag in (content_div or soup).find_all('img',limit=5):
-            src=img_tag.get('src') or img_tag.get('data-src')
-            if src and src.startswith('http'): image_urls.add(src)
-        st.success(f"✅ تم العثور على العنوان و {len(image_urls)} رابط صورة.")
-        return {'title':title,'content':content,'image_urls':list(image_urls)}
-    except Exception as e: st.error(f"!! خطأ في تحليل الرابط: {e}"); return None
+        response = requests.get(url, stream=True, timeout=10)
+        response.raise_for_status()
+        with open(filename, 'wb') as f:
+            f.write(response.content)
+        return filename
+    except requests.RequestException:
+        return None
 
-def download_images(urls):
-    paths=[]
-    for i,url in enumerate(urls[:4]):
-        try:
-            res=requests.get(url,stream=True,timeout=15); res.raise_for_status()
-            parsed_url = urlparse(url)
-            filename = os.path.basename(parsed_url.path) or f"temp_img_{random.randint(1000,9999)}.jpg"
-            path=os.path.join("temp_media", filename)
-            with open(path,'wb') as f: f.write(res.content)
-            paths.append(path)
-        except Exception as e: st.warning(f"  !! فشل تنزيل الصورة: {url[:50]}...")
-    return paths
-
-def send_video_to_telegram(video_path, thumb_path, caption, token, channel_id):
-    st.info("--> جاري نشر الفيديو إلى تليجرام...")
+async def send_to_telegram(video_path, thumb_path, caption, hashtag):
     try:
-        url = f"https://api.telegram.org/bot{token}/sendVideo"
+        bot = telegram.Bot(token=st.secrets.TELEGRAM_BOT_TOKEN)
+        full_caption = f"{caption}\n\n<b>{hashtag}</b>"
         with open(video_path, 'rb') as video_file, open(thumb_path, 'rb') as thumb_file:
-            payload={'chat_id':channel_id,'caption':caption,'parse_mode':'HTML','supports_streaming':True}
-            files={'video':video_file,'thumb':thumb_file}
-            response = requests.post(url, data=payload, files=files, timeout=1800)
-            if response.status_code == 200:
-                st.balloons(); st.success("✅ تم النشر بنجاح!")
-                return True
-            else:
-                st.error(f"!! فشل النشر: {response.status_code} - {response.text}")
-                return False
-    except requests.exceptions.RequestException as e:
-        st.error(f"!! خطأ فادح أثناء الاتصال بتليجرام: {e}"); return False
+            await bot.send_video(
+                chat_id=st.secrets.TELEGRAM_CHANNEL_ID,
+                video=video_file,
+                thumbnail=thumb_file,
+                caption=full_caption,
+                parse_mode=ParseMode.HTML,
+                read_timeout=180,
+                write_timeout=180,
+                supports_streaming=True
+            )
+        st.success("✅ تم نشر الفيديو بنجاح على تليجرام!")
+    except Exception as e:
+        st.error(f"حدث خطأ أثناء الإرسال إلى تليجرام: {e}")
 
-# ==============================================================================
-#             محرك رسم التصاميم الاحترافية
-# ==============================================================================
-def draw_text_word_by_word(draw, box_coords, lines, words_to_show, font, fill, shadow):
-    x, y, w, h = box_coords
-    line_height = font.getbbox("ا")[3] + 20
-    total_text_height = len(lines) * line_height
-    current_y = y + (h - total_text_height) / 2
-    words_shown = 0
-    for line in lines:
-        words_in_line = line.split()
-        words_to_draw_in_line = []
-        for word in words_in_line:
-            if words_shown < words_to_show:
-                words_to_draw_in_line.append(word)
-                words_shown += 1
-            else: break
-        if words_to_draw_in_line:
-            partial_line = " ".join(words_to_draw_in_line)
-            processed_partial_line = process_text(partial_line)
-            line_width = font.getbbox(processed_partial_line)[2]
-            draw_text(draw, (x + w - line_width, current_y), partial_line, font, fill, shadow)
-        current_y += line_height
-        if words_shown >= words_to_show: break
+def save_uploaded_file(uploaded_file):
+    """
+    حفظ الملف المرفوع مؤقتًا وإرجاع مساره
+    """
+    if uploaded_file is not None:
+        file_path = f"temp_{uploaded_file.name}"
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        return file_path
+    return None
 
-def render_dynamic_split_scene(frame_idx, total_frames, text_lines, image, settings):
-    W, H = settings['dimensions']
-    frame = Image.new('RGB', (W, H), (15, 15, 15))
-    if H > W: # Vertical layout
-        img_h, text_h = H // 2, H // 2
-        img_resized = image.resize((W, img_h), Image.Resampling.LANCZOS)
-        frame.paste(img_resized, (0, 0))
-        text_box = (20, img_h + 20, W - 40, text_h - 40)
-    else: # Horizontal layout
-        img_w = W // 2
-        img_resized = image.resize((img_w, H), Image.Resampling.LANCZOS)
-        frame.paste(img_resized, (0, 0))
-        grad = Image.new('RGBA', (img_w, H), (0, 0, 0, 0))
-        g_draw = ImageDraw.Draw(grad)
-        for j in range(img_w // 2):
-            g_draw.line([(img_w - j, 0), (img_w - j, H)], fill=(0, 0, 0, int(255 * (j / (img_w // 2)))), width=1)
-        frame.paste(grad, (0, 0), grad)
-        text_box = (img_w + 50, 0, (W // 2) - 100, H)
+def main_app():
+    st.set_page_config(page_title="أداة إنشاء الفيديو الإخباري", layout="wide")
+    st.title("🎬 أداة إنشاء الفيديو الإخباري")
+    st.markdown(f"مرحباً بك **{st.session_state['username']}**! استخدم هذه الواجهة لإنشاء فيديوهات إخبارية بسهولة.")
     
-    draw = ImageDraw.Draw(frame)
-    text_font = ImageFont.truetype(FONT_FILE, settings['font_size'])
-    total_words = len(" ".join(text_lines).split())
-    words_to_show = int((frame_idx / total_frames) * total_words * 1.5) + 1
-    draw_text_word_by_word(draw, text_box, text_lines, words_to_show, text_font, settings['text_color'], settings['shadow_color'])
-    return frame
-
-def render_cinematic_overlay_scene(frame_idx, total_frames, text_lines, image, settings):
-    W, H = settings['dimensions']
-    frame = fit_image_to_frame(image, W, H, frame_idx, total_frames)
-    draw = ImageDraw.Draw(frame, 'RGBA')
-    text_font = ImageFont.truetype(FONT_FILE, settings['font_size'])
-    line_height = text_font.getbbox("ا")[3] + 20
-    plate_height = min((len(text_lines) * line_height) + 60, H // 2)
-    draw.rectangle([(0, H - plate_height), (W, H)], fill=(0, 0, 0, 180))
-    total_words = len(" ".join(text_lines).split())
-    words_to_show = int((frame_idx / total_frames) * total_words * 1.5) + 1
-    draw_text_word_by_word(draw, (40, H - plate_height, W - 80, plate_height), text_lines, words_to_show, text_font, settings['text_color'], settings['shadow_color'])
-    return frame
-
-def render_modern_grid_scene(frame_idx, total_frames, text_lines, image, settings):
-    W, H = settings['dimensions']
-    frame = fit_image_to_frame(image, W, H, frame_idx, total_frames).point(lambda p: p * 0.5)
-    draw = ImageDraw.Draw(frame, 'RGBA')
-    padding = 80 if W > H else 40
-    draw.rectangle([(padding, padding), (W - padding, H - padding)], outline=settings['cat']['color'], width=5)
-    draw.rectangle([(padding + 10, padding + 10), (W - padding - 10, H - padding - 10)], fill=(0, 0, 0, 190))
-    text_font = ImageFont.truetype(FONT_FILE, settings['font_size'])
-    total_words = len(" ".join(text_lines).split())
-    words_to_show = int((frame_idx / total_frames) * total_words * 1.5) + 1
-    box = (padding + 40, padding + 40, W - 2 * (padding + 40), H - 2 * (padding + 40))
-    draw_text_word_by_word(draw, box, text_lines, words_to_show, text_font, settings['text_color'], settings['shadow_color'])
-    return frame
-
-def render_news_ticker_scene(frame_idx, total_frames, text_lines, image, settings):
-    W, H = settings['dimensions']
-    frame = fit_image_to_frame(image, W, H, frame_idx, total_frames)
-    draw = ImageDraw.Draw(frame, 'RGBA')
-    font_size = int(H * 0.05)
-    ticker_font = ImageFont.truetype(FONT_FILE, font_size)
-    bar_height = int(font_size * 1.8)
-    draw.rectangle([(0, H - bar_height), (W, H)], fill=(0, 0, 0, 190))
-    cat_bar_width = W // 4
-    draw.rectangle([(W - cat_bar_width, H - bar_height), (W, H)], fill=settings['cat']['color'])
-    cat_font_size = int(font_size * 0.8)
-    cat_font = ImageFont.truetype(FONT_FILE, cat_font_size)
-    cat_text = process_text(settings['cat']['name'])
-    cat_w, cat_h = cat_font.getbbox(cat_text)[2], cat_font.getbbox(cat_text)[3]
-    draw_text(draw, (W - (cat_bar_width + cat_w) // 2, H - bar_height + (bar_height - cat_h) // 2 - 5), settings['cat']['name'], cat_font, '#FFFFFF', 'rgba(0,0,0,0.5)')
-    full_text = " ".join(text_lines) + "   ***   "
-    full_text_processed = process_text(full_text)
-    text_width = ticker_font.getbbox(full_text_processed)[2]
-    progress = frame_idx / total_frames
-    total_scroll_dist = (W * 0.7) + text_width
-    start_pos = W
-    current_x = start_pos - (total_scroll_dist * progress)
-    draw_text(draw, (current_x, H - bar_height + (bar_height - font_size) // 2 - 10), full_text, ticker_font, settings['text_color'], settings['shadow_color'])
-    draw_text(draw, (current_x + text_width, H - bar_height + (bar_height - font_size) // 2 - 10), full_text, ticker_font, settings['text_color'], settings['shadow_color'])
-    return frame
-
-def render_title_scene(writer, duration, text, image_path, settings):
-    W, H = settings['dimensions']
-    FPS = 30
-    frames = int(duration * FPS)
-    img = Image.open(image_path).convert("RGB")
-    title_font = ImageFont.truetype(FONT_FILE, int(W / 12 if H > W else W / 18))
-    cat_font = ImageFont.truetype(FONT_FILE, int(W / 20 if H > W else W / 35))
-    cat = settings['cat']
-    for i in range(frames):
-        frame = fit_image_to_frame(img, W, H, i, frames)
-        draw = ImageDraw.Draw(frame, 'RGBA')
-        draw.rectangle([(0, H * 0.6), (W, H)], fill=(0, 0, 0, 180))
-        cat_bbox = cat_font.getbbox(process_text(cat['name']))
-        draw_text(draw, (W - cat_bbox[2] - 40, H * 0.65), cat['name'], cat_font, cat['color'], (0, 0, 0, 150))
-        wrapped_lines = wrap_text(text, title_font, W - 80)
-        y = H * 0.72
-        for line in wrapped_lines:
-            bbox = title_font.getbbox(process_text(line))
-            draw_text(draw, (W - bbox[2] - 40, y), line, title_font, settings['text_color'], settings['shadow_color'])
-            y += bbox[3] * 1.3
-        writer.write(cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR))
-
-def render_source_outro_scene(writer, duration, logo_path, settings):
-    W, H = settings['dimensions']
-    FPS = 30
-    frames = int(duration * FPS)
-    font_big = ImageFont.truetype(FONT_FILE, int(W / 20 if H > W else W / 28))
-    font_small = ImageFont.truetype(FONT_FILE, int(W / 30 if H > W else W / 45))
-    logo = Image.open(logo_path).convert("RGBA") if logo_path and os.path.exists(logo_path) else None
-    text1 = "للتفاصيل الكاملة ومتابعة آخر الأخبار"
-    text2 = "قــم بــزيــارة مــوقــعــنــا"
-    for i in range(frames):
-        progress = i / frames
-        frame = Image.new('RGB', (W, H), (10, 10, 10))
-        draw = ImageDraw.Draw(frame, 'RGBA')
-        if logo:
-            size = int((settings['logo_size']) * ease_in_out_quad(progress))
-            if size > 0:
-                l = logo.resize((size, size), Image.Resampling.LANCZOS)
-                frame.paste(l, ((W - size) // 2, H // 2 - size - 20), l)
-        if progress > 0.2:
-            text_progress = (progress - 0.2) / 0.8
-            alpha = int(255 * text_progress)
-            text_color_rgba = f"{settings['text_color']}{alpha:02x}"
-            shadow_color_rgba = f"{settings['shadow_color']}{int(alpha * 0.8):02x}"
-            y_pos = H // 2 + 50
-            bbox1 = font_big.getbbox(process_text(text1))
-            draw_text(draw, ((W - bbox1[2]) / 2, y_pos), text1, font_big, text_color_rgba, shadow_color_rgba)
-            bbox2 = font_small.getbbox(process_text(text2))
-            draw_text(draw, ((W - bbox2[2]) / 2, y_pos + 100), text2, font_small, text_color_rgba, shadow_color_rgba)
-        writer.write(cv2.cvtColor(np.array(frame), cv2.COLOR_RGB2BGR))
-
-# ==============================================================================
-#                      الوظيفة الرئيسية لإنشاء الفيديو
-# ==============================================================================
-def create_story_video(article_data, image_paths, settings):
-    W, H = settings['dimensions']
-    FPS = 30
-    if not image_paths:
-        st.error("!! خطأ فادح: لا توجد صور لإنشاء الفيديو.")
-        return None, None
-    progress_bar = st.progress(0, text="بدء عملية إنشاء الفيديو...")
-    render_function = {
-        "ديناميكي": render_dynamic_split_scene, "سينمائي": render_cinematic_overlay_scene,
-        "عصري": render_modern_grid_scene, "شريط إخباري": render_news_ticker_scene
-    }[settings['design_choice']]
-    scenes=[]; current_duration = settings['intro_duration'] + settings['outro_duration']
-    content_sentences=[s.strip() for s in article_data.get('content','').split('.') if len(s.strip())>20]
-    available_images=image_paths[1:] if len(image_paths)>1 else list(image_paths)
-    current_text_chunk=""
-    for sentence in content_sentences:
-        current_text_chunk += sentence + ". "
-        words_in_chunk = len(current_text_chunk.split())
-        estimated_scene_duration = max(settings['min_scene_duration'], words_in_chunk / 2.5)
-        if current_duration + estimated_scene_duration > settings['max_video_duration']:
-            st.warning(f"⚠️ تم الوصول للحد الأقصى للمدة ({settings['max_video_duration']} ثانية).")
-            break
-        if words_in_chunk > 30 and available_images:
-            img_scene = available_images.pop(0)
-            scenes.append({'duration': estimated_scene_duration, 'text': current_text_chunk, 'image': img_scene})
-            current_duration += estimated_scene_duration
-            current_text_chunk = ""
-            if not available_images: available_images = list(image_paths)
-    if not scenes and content_sentences:
-        text = " ".join(content_sentences); duration = max(settings['min_scene_duration'], len(text.split()) / 2.5)
-        scenes.append({'duration': duration, 'text': text, 'image': image_paths[0]})
-    
-    temp_videos = []
-    if settings.get('intro_video'):
-        progress_bar.progress(5, text="إعداد مقدمة الفيديو...")
-        resized_intro = f"temp_media/resized_intro.mp4"
-        (ffmpeg.input(settings['intro_video']).filter('scale', W, H).output(resized_intro, r=FPS).overwrite_output().run(quiet=True)); temp_videos.append(resized_intro)
-    
-    silent_content_path = f"temp_media/silent_content_{random.randint(1000,9999)}.mp4"
-    writer = cv2.VideoWriter(silent_content_path, cv2.VideoWriter_fourcc(*'mp4v'), FPS, (W, H))
-    progress_bar.progress(10, text="🎬 تصيير مشهد العنوان..."); render_title_scene(writer, settings['intro_duration'], article_data['title'], image_paths[0], settings)
-    sfx_times=[settings['intro_duration']]
-    for i, scene in enumerate(scenes):
-        progress_bar.progress(20 + int(60 * (i / len(scenes))), text=f"-> تصيير مشهد نصي ({i+1}/{len(scenes)})...")
-        frames_scene=int(scene['duration']*FPS); image=Image.open(scene['image']).convert("RGB")
-        text_font=ImageFont.truetype(FONT_FILE, settings['font_size'])
-        max_w = (W//2 - 120) if settings['design_choice'] == "ديناميكي" and W > H else (W - 160)
-        text_lines=wrap_text(scene['text'],text_font,max_w)
-        for j in range(frames_scene):
-            frame=render_function(j,frames_scene,text_lines,image,settings); writer.write(cv2.cvtColor(np.array(frame),cv2.COLOR_RGB2BGR))
-        sfx_times.append(sfx_times[-1]+scene['duration'])
-    progress_bar.progress(80, text="🎬 تصيير مشهد الخاتمة..."); render_source_outro_scene(writer, settings['outro_duration'], settings['logo_file'], settings); writer.release(); temp_videos.append(silent_content_path)
-    
-    if settings.get('outro_video'):
-        progress_bar.progress(85, text="إعداد خاتمة الفيديو...")
-        resized_outro = f"temp_media/resized_outro.mp4"
-        (ffmpeg.input(settings['outro_video']).filter('scale', W, H).output(resized_outro, r=FPS).overwrite_output().run(quiet=True)); temp_videos.append(resized_outro)
-    
-    progress_bar.progress(90, text="🔄 دمج مقاطع الفيديو..."); final_silent_video_path = f"temp_media/final_silent_{random.randint(1000,9999)}.mp4"
-    concat_list_path = "temp_media/concat_list.txt"
-    with open(concat_list_path, "w") as f:
-        for v in temp_videos: f.write(f"file '{os.path.basename(v)}'\n")
-    (ffmpeg.input(concat_list_path, format='concat', safe=0, r=FPS).output(final_silent_video_path, c='copy').overwrite_output().run(cwd='temp_media', quiet=True))
-    
-    progress_bar.progress(95, text="🔊 دمج الصوتيات...");
-    try:
-        total_duration = float(ffmpeg.probe(final_silent_video_path)['format']['duration'])
-        vid_stream=ffmpeg.input(final_silent_video_path); audio_inputs=[]
-        tts_path = settings.get('tts_audio_path')
-        if tts_path: audio_inputs.append(ffmpeg.input(tts_path, t=total_duration).filter('volume', settings['tts_volume']))
-        music_files = settings.get('music_files', [])
-        if music_files:
-            music_vol = settings['music_volume'] * 0.4 if tts_path else settings['music_volume']
-            music_stream = ffmpeg.input(random.choice(music_files),stream_loop=-1,t=total_duration).filter('volume',music_vol).filter('afade',type='out',start_time=total_duration-3,duration=3); audio_inputs.append(music_stream)
-        sfx_file = settings.get('sfx_file')
-        if sfx_file and sfx_times:
-            sfx_streams = ffmpeg.input(sfx_file).filter('volume', settings['sfx_volume']).asplit(len(sfx_times))
-            for i, time_s in enumerate(sfx_times): audio_inputs.append(sfx_streams[i].filter('adelay',f'{int(time_s*1000)}ms|{int(time_s*1000)}ms'))
+    # التحقق من وجود ملف الخط واللوجو الافتراضي
+    if not os.path.exists(FONT_FILE):
+        st.error(f"خطأ فادح: ملف الخط '{FONT_FILE}' غير موجود. يرجى وضعه في نفس مجلد التطبيق.")
+        return
+    if not os.path.exists(DEFAULT_LOGO_FILE):
+        st.warning(f"تنبيه: ملف اللوجو الافتراضي '{DEFAULT_LOGO_FILE}' غير موجود. يمكنك رفع لوجو مخصص.")
         
-        output_video_name = "final_news_story.mp4"
-        if audio_inputs:
-            mixed_audio=ffmpeg.filter(audio_inputs,'amix',duration='longest',inputs=len(audio_inputs))
-            ffmpeg.output(vid_stream, mixed_audio, output_video_name, vcodec='libx264', acodec='aac', pix_fmt='yuv420p', preset='fast', crf=28, audio_bitrate='96k').overwrite_output().run(quiet=True)
-        else: ffmpeg.output(vid_stream, output_video_name, vcodec='copy').run(quiet=True)
-    except ffmpeg.Error as e: st.error(f"!! خطأ FFMPEG: {e.stderr.decode()}"); return None,None
+
+    # ========================== 1. إدخال المحتوى ===========================
+    st.header("1. إدخال المحتوى")
     
-    progress_bar.progress(98, text="🖼️ إنشاء الصورة المصغرة..."); thumbnail_name = "thumbnail.jpg"
-    thumb=Image.open(image_paths[0]).convert("RGB").resize((W,H)); draw_t=ImageDraw.Draw(thumb,'RGBA')
-    draw_t.rectangle([(0,0),(W,H)],fill=(0,0,0,100)); font_t=ImageFont.truetype(FONT_FILE,int(W/10 if H>W else W/15))
-    lines=wrap_text(article_data['title'],font_t,W-100); y=H/2-(len(lines)*120)/2
-    for line in lines: draw_text(draw_t,((W-font_t.getbbox(process_text(line))[2])/2,y),line,font_t,settings['text_color'],settings['shadow_color']); y+=120
-    thumb.save(thumbnail_name,'JPEG',quality=85)
-    progress_bar.progress(100, text="✅ اكتمل الإنشاء!"); return output_video_name, thumbnail_name
+    input_method = st.radio("اختر طريقة الإدخال:", ("إدخال نص يدوي", "سحب البيانات من رابط"))
+    
+    news_text = ""
+    news_image_path = None
+    news_url = ""
 
-# ==============================================================================
-#                      واجهة المستخدم الرسومية (Streamlit)
-# ==============================================================================
-with st.sidebar:
-    st.header("🎬 إعدادات الفيديو الأساسية")
-    aspect_ratio_option = st.selectbox("اختر أبعاد الفيديو (النسبة):", ("16:9 (يوتيوب، أفقي)", "9:16 (تيك توك، عمودي)"), key="aspect_ratio")
-    dimensions = (1920, 1080) if "16:9" in aspect_ratio_option else (1080, 1920)
-    st.header("📂 الملفات")
-    logo_file_uploaded = st.file_uploader("ارفع شعار القناة (PNG)", type=["png"])
-    logo_file_path = save_uploaded_file(logo_file_uploaded) or ("logo.png" if os.path.exists("logo.png") else None)
-    font_file_uploaded = st.file_uploader("ارفع ملف الخط (TTF)", type=["ttf"])
-    FONT_FILE = save_uploaded_file(font_file_uploaded) or "Amiri-Bold.ttf"
-    intro_video_uploaded = st.file_uploader("ارفع فيديو المقدمة (اختياري)", type=["mp4"])
-    intro_video_path = save_uploaded_file(intro_video_uploaded, "temp_media")
-    outro_video_uploaded = st.file_uploader("ارفع فيديو الخاتمة (اختياري)", type=["mp4"])
-    outro_video_path = save_uploaded_file(outro_video_uploaded, "temp_media")
-    st.header("🎵 الصوتيات")
-    enable_tts = st.checkbox("📢 تفعيل التعليق الصوتي الآلي (TTS)")
-    tts_volume = st.slider("مستوى صوت التعليق الصوتي (TTS)", 0.0, 2.0, 1.0, 0.1, disabled=not enable_tts)
-    music_files_uploaded = st.file_uploader("ارفع ملفات الموسيقى الخلفية (MP3)", type=["mp3"], accept_multiple_files=True)
-    music_files_paths = [save_uploaded_file(f) for f in music_files_uploaded]
-    sfx_file_uploaded = st.file_uploader("ارفع المؤثر الصوتي للانتقالات (MP3)", type=["mp3"])
-    sfx_file_path = save_uploaded_file(sfx_file_uploaded)
-    st.header("🔒 إعدادات النشر والأمان")
-    TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", ""); TELEGRAM_CHANNEL_ID = st.secrets.get("TELEGRAM_CHANNEL_ID", "")
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID: st.warning("لم يتم العثور على معلومات تليجرام في ملف (secrets.toml).")
-    else: st.success("تم تحميل إعدادات تليجرام.")
+    if input_method == "سحب البيانات من رابط":
+        news_url = st.text_input("أدخل رابط المقال هنا:")
+        if st.button("🔍 سحب البيانات"):
+            if news_url:
+                with st.spinner("جاري تحليل الرابط..."):
+                    article_data = scrape_article_page(news_url)
+                    if article_data:
+                        st.session_state['news_text'] = article_data['title']
+                        if article_data['image_url']:
+                           st.session_state['news_image_path'] = download_image(article_data['image_url'])
+                           st.success("تم سحب البيانات بنجاح!")
+                    else:
+                        st.error("لم يتم العثور على بيانات في الرابط.")
+            else:
+                st.warning("الرجاء إدخال رابط.")
+    
+    # عرض الحقول وتعبئتها من st.session_state إذا كانت موجودة
+    news_text = st.text_area("نص الخبر:", value=st.session_state.get('news_text', ''), height=150)
+    
+    st.write("صورة الخلفية:")
+    if 'news_image_path' in st.session_state and st.session_state['news_image_path']:
+        st.image(st.session_state['news_image_path'], caption="الصورة المسحوبة من الرابط", width=200)
+    
+    uploaded_background = st.file_uploader("أو قم برفع صورة خلفية مخصصة (اختياري)", type=['jpg', 'jpeg', 'png'])
+    if uploaded_background:
+        news_image_path = save_uploaded_file(uploaded_background)
+    elif 'news_image_path' in st.session_state:
+        news_image_path = st.session_state.get('news_image_path')
 
-tab1, tab2 = st.tabs(["📝 المحتوى والتخصيص", "🖼️ رفع صور يدوية"])
-with tab1:
-    st.subheader("1. اختر مصدر المحتوى"); content_choice = st.radio("اختر طريقة الإدخال:", ('إدخال رابط مقال', 'إدخال نص يدوي'), horizontal=True, key="content_choice")
-    items_to_process = []
-    if content_choice == 'إدخال رابط مقال':
-        url = st.text_input("🔗 أدخل رابط المقال هنا:"); 
-        if url: items_to_process.append({'type':'url','value':url})
-    else:
-        title = st.text_input("✍️  أدخل عنوان الخبر:"); content = st.text_area("📄 أدخل نص الخبر (اختياري):")
-        if title: items_to_process.append({'type':'text', 'title': title, 'content': content})
-with tab2:
-    st.subheader("🖼️ رفع صور مخصصة للمشاهد"); st.info("هذه الصور ستُدمج مع الصور المسحوبة من الرابط (إن وجد).")
-    manual_images_uploaded = st.file_uploader("ارفع صورة واحدة أو أكثر", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
-    manual_image_paths = [save_uploaded_file(img, "temp_media") for img in manual_images_uploaded]
-    if manual_image_paths: st.image(manual_image_paths, width=150)
 
-st.divider(); st.subheader("2. تخصيص تصميم الفيديو")
-col1, col2 = st.columns(2)
-with col1:
-    with st.container(border=True):
-        st.markdown("🎨 **التصميم والألوان**")
-        design_choice = st.selectbox("اختر التصميم البصري:", ("ديناميكي", "سينمائي", "عصري", "شريط إخباري"))
-        NEWS_CATEGORIES={"1":{"name":"عاجل","color":"#D32F2F"}, "2":{"name":"أخبار","color":"#0080D4"}, "3":{"name":"رياضة","color":"#4CAF50"}}
-        cat_name = st.selectbox("اختر فئة الخبر:", [v['name'] for v in NEWS_CATEGORIES.values()])
-        cat_choice_key = [k for k, v in NEWS_CATEGORIES.items() if v['name'] == cat_name][0]
-        cat_color = st.color_picker("اختر لون الفئة:", NEWS_CATEGORIES[cat_choice_key]['color']); final_cat = {'name': cat_name, 'color': cat_color}
-        text_color = st.color_picker('لون النص الأساسي', '#FFFFFF'); shadow_color = st.color_picker('لون ظل النص', '#000000')
-with col2:
-     with st.container(border=True):
-        st.markdown("⏱️ **المدة والأبعاد**")
-        max_video_duration = st.slider("المدة القصوى للفيديو (ثانية)", 20, 180, 60); min_scene_duration = st.slider("الحد الأدنى لمدة المشهد (ثانية)", 2.0, 10.0, 4.5, 0.5)
-        intro_duration = st.slider("مدة مشهد العنوان (ثانية)", 2.0, 10.0, 4.0, 0.5); outro_duration = st.slider("مدة مشهد الخاتمة (ثانية)", 3.0, 15.0, 7.0, 0.5)
-col3, col4 = st.columns(2)
-with col3:
-    with st.container(border=True):
-        st.markdown("⚙️ **إعدادات متقدمة**")
-        font_size = st.slider("حجم الخط في المشاهد", 30, 120, int(dimensions[0]/28))
-        logo_size_outro = st.slider("حجم الشعار في الخاتمة (بكسل)", 100, 800, int(dimensions[0]/4.5))
-with col4:
-    with st.container(border=True):
-        st.markdown("🔊 **مستويات الصوت**")
-        music_volume = st.slider("مستوى صوت الموسيقى", 0.0, 1.0, 0.1, 0.05); sfx_volume = st.slider("مستوى صوت المؤثرات", 0.0, 1.0, 0.4, 0.05)
+    # ========================== 2. إعدادات التصميم والفيديو ===========================
+    st.header("2. تخصيص الفيديو")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("التصميم الأساسي")
+        template_options = {v['name']: k for k, v in NEWS_TEMPLATES.items()}
+        selected_template_name = st.selectbox("اختر قالب الخبر:", list(template_options.keys()))
+        selected_template_key = template_options[selected_template_name]
+        selected_template = NEWS_TEMPLATES[selected_template_key]
+        
+        design_type = st.selectbox("اختر نمط التصميم:", ("classic", "cinematic"), format_func=lambda x: "كلاسيكي" if x == 'classic' else "سينمائي")
+        
+        dimension_name = st.selectbox("اختر أبعاد الفيديو:", list(VIDEO_DIMENSIONS.keys()))
+        W, H = VIDEO_DIMENSIONS[dimension_name]
 
-st.divider()
-if st.button("🚀 **ابدأ إنشاء الفيديو والنشر**", type="primary", use_container_width=True):
-    if not items_to_process:
-        st.error("الرجاء إدخال محتوى أولاً (رابط أو نص يدوي).")
-    elif not os.path.exists(FONT_FILE):
-        st.error(f"ملف الخط '{FONT_FILE}' غير موجود! يرجى رفعه من الشريط الجانبي.")
-    else:
-        tts_audio_path = None
-        item = items_to_process[0]
-        article_data, image_paths, source_url = None, [], None
-        with st.spinner('⏳ جاري تحضير البيانات...'):
-            if item['type'] == 'url':
-                source_url = item['value']; scraped_data = scrape_article_data(source_url)
-                if scraped_data: article_data = scraped_data; image_paths.extend(download_images(article_data['image_urls']))
-            elif item['type'] == 'text':
-                article_data = {'title': item['title'], 'content': item['content']}
-            image_paths.extend(manual_image_paths)
-            image_paths = sorted(set(image_paths), key=image_paths.index)
-            if not image_paths:
-                if logo_file_path and os.path.exists(logo_file_path):
-                    st.warning("لم يتم العثور على صور، سيتم استخدام الشعار كصورة افتراضية."); image_paths = [logo_file_path]
-        if enable_tts and article_data:
-            with st.spinner("⏳ جاري إنشاء التعليق الصوتي..."):
-                full_text_for_tts = article_data['title'] + ". " + article_data.get('content', '')
-                tts_audio_path = generate_tts_audio(full_text_for_tts)
-                if tts_audio_path: st.success("✅ تم إنشاء التعليق الصوتي.")
-        settings = {
-            'dimensions': dimensions, 'tts_audio_path': tts_audio_path, 'tts_volume': tts_volume, 'logo_file': logo_file_path,
-            'intro_video': intro_video_path, 'outro_video': outro_video_path, 'music_files': music_files_paths, 'sfx_file': sfx_file_path,
-            'design_choice': design_choice, 'cat': final_cat, 'text_color': text_color, 'shadow_color': shadow_color,
-            'max_video_duration': max_video_duration, 'min_scene_duration': min_scene_duration, 'intro_duration': intro_duration, 'outro_duration': outro_duration,
-            'font_size': font_size, 'logo_size': logo_size_outro, 'music_volume': music_volume, 'sfx_volume': sfx_volume,
-        }
-        if article_data and image_paths:
-            video_file, thumb_file = create_story_video(article_data, image_paths, settings)
-            if video_file and thumb_file:
-                st.success(f"✅ نجاح! تم إنشاء الفيديو '{video_file}'."); st.video(video_file); st.image(thumb_file)
-                caption=[f"<b>{article_data['title']}</b>",""]
-                if source_url: caption.append(f"🔗 <b>المصدر:</b> {source_url}")
-                send_video_to_telegram(video_file, thumb_file, "\n".join(caption), TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID)
-                time.sleep(2)
-                for f in os.listdir("temp_media"): os.remove(os.path.join("temp_media", f))
-            else: st.error("❌ فشلت عملية إنشاء الفيديو لهذا العنصر.")
-        else: st.error("!! فشل في تحضير البيانات أو الصور للفيديو.")
+    with col2:
+        st.subheader("إعدادات الأنيميشن والتوقيت")
+        seconds_per_page = st.slider("مدة عرض الصفحة (ثانية):", 1, 20, 8)
+        words_per_second = st.slider("سرعة ظهور الكلمات (كلمة/ثانية):", 1, 10, 4)
+        max_lines = st.slider("أقصى عدد للأسطر في الصفحة:", 1, 6, 3)
+        outro_duration = st.slider("مدة الخاتمة (ثانية):", 1.0, 10.0, 6.5)
+        ken_burns_zoom = st.slider("معامل تقريب Ken Burns:", 1.0, 1.2, 1.05)
+
+
+    # ========================== 3. تخصيص الوسائط (الميزة الجديدة) =======================
+    st.header("3. تخصيص الوسائط (اختياري)")
+    
+    media_col1, media_col2 = st.columns(2)
+    
+    with media_col1:
+        st.subheader("الصوتيات")
+        
+        # ميزة تحويل النص إلى كلام
+        use_tts = st.checkbox("🎤 إنشاء تعليق صوتي من نص الخبر (TTS)")
+        voiceover_path = None
+        
+        uploaded_music = st.file_uploader("🎵 رفع موسيقى خلفية", type=['mp3', 'wav', 'aac'])
+        music_path = save_uploaded_file(uploaded_music)
+        music_volume = st.slider("🔊 مستوى صوت الموسيقى:", 0.0, 1.0, 0.15, disabled=(music_path is None))
+
+    with media_col2:
+        st.subheader("الملفات الإضافية")
+        uploaded_logo = st.file_uploader("🖼️ رفع لوجو مخصص (سيستخدم بدلاً من الافتراضي)", type=['png'])
+        logo_path = save_uploaded_file(uploaded_logo) or (DEFAULT_LOGO_FILE if os.path.exists(DEFAULT_LOGO_FILE) else None)
+        
+        uploaded_intro = st.file_uploader("🎞️ رفع فيديو مقدمة (Intro)", type=['mp4'])
+        intro_path = save_uploaded_file(uploaded_intro)
+        
+        uploaded_outro = st.file_uploader("🎞️ رفع فيديو خاتمة (Outro)", type=['mp4'])
+        outro_path = save_uploaded_file(uploaded_outro)
+
+    # ========================== 4. إنشاء ونشر الفيديو ===========================
+    st.header("4. إنشاء ونشر")
+    
+    if st.button("🚀 ابدأ إنشاء الفيديو", type="primary"):
+        if not news_text.strip():
+            st.error("خطأ: نص الخبر فارغ! يرجى إدخال نص لإنشاء الفيديو.")
+        elif not logo_path:
+            st.error("خطأ: لم يتم العثور على ملف اللوجو. يرجى التأكد من وجود `logo.png` أو رفع ملف مخصص.")
+        else:
+            with st.spinner("التحضير لإنشاء الفيديو..."):
+                if use_tts:
+                    try:
+                        tts_status = st.info("⏳ جاري تحويل النص إلى كلام...")
+                        tts = gTTS(text=news_text, lang='ar', slow=False)
+                        voiceover_path = f"temp_tts_{int(time.time())}.mp3"
+                        tts.save(voiceover_path)
+                        tts_status.success("✅ تم إنشاء التعليق الصوتي بنجاح.")
+                    except Exception as e:
+                        st.warning(f"فشل إنشاء التعليق الصوتي: {e}. سيتم إنشاء الفيديو بدون صوت.")
+                        voiceover_path = None
+
+                params = {
+                    'text': news_text, 'image_path': news_image_path,
+                    'design_type': design_type, 'template': selected_template,
+                    'dimensions': (W, H), 'seconds_per_page': seconds_per_page,
+                    'words_per_second': words_per_second, 'max_lines': max_lines,
+                    'outro_duration': outro_duration, 'ken_burns_zoom': ken_burns_zoom,
+                    'logo_path': logo_path, 'music_path': music_path, 'music_volume': music_volume,
+                    'intro_path': intro_path, 'outro_path': outro_path, 'voiceover_path': voiceover_path
+                }
+                
+                progress_bar = st.progress(0, "بدء عملية إنشاء الإطارات...")
+                
+                # 1. إنشاء الفيديو الصامت
+                silent_video_path, thumb_path = create_video_frames(params, progress_bar)
+                
+                if silent_video_path:
+                    # 2. دمج الصوتيات والوسائط الإضافية
+                    final_video_path = combine_media(params, silent_video_path)
+
+                    if final_video_path:
+                        st.success("🎉 اكتمل إنشاء الفيديو بنجاح!")
+                        st.video(final_video_path)
+                        
+                        caption_parts = [news_text]
+                        if news_url:
+                            caption_parts.extend(["", f"<b>{DETAILS_TEXT}</b> {news_url}"])
+                        final_caption = "\n".join(caption_parts)
+
+                        # ... داخل دالة main_app
+                        if st.checkbox("نشر الفيديو على تليجرام؟", value=True):
+                         if st.button("📤 إرسال إلى تليجرام"):
+                          with st.spinner("جاري الإرسال..."):
+                                # هنا التعديل: نستخدم asyncio.run لتشغيل الدالة غير المتزامنة
+                            asyncio.run(send_to_telegram(final_video_path, thumb_path, final_caption, selected_template['hashtag']))
+
+# ============================ نقطة بداية التطبيق ==============================
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
+
+if st.session_state["logged_in"]:
+    # إذا كان المستخدم مسجلاً، اعرض التطبيق الرئيسي
+    # إضافة زر تسجيل الخروج في الشريط الجانبي
+    with st.sidebar:
+        st.write(f"المستخدم: **{st.session_state.get('username', '')}**")
+        if st.button("تسجيل الخروج"):
+            st.session_state["logged_in"] = False
+            st.rerun()
+    main_app()
+else:
+    # وإلا، اعرض صفحة تسجيل الدخول
+    login_page()
