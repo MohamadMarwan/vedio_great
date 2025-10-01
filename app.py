@@ -8,6 +8,7 @@ import os
 import asyncio
 import cv2
 import numpy as np
+import ffmpeg  # <-- استيراد قياسي وطبيعي
 import requests
 from bs4 import BeautifulSoup
 from gtts import gTTS
@@ -189,37 +190,33 @@ def create_video_frames(params, progress_bar):
     status_placeholder.empty()
     return silent_video_path, thumb_path
 
-# ===> التعديل النهائي هنا <===
 def combine_media(params, silent_video_path):
-    # نستورد المكونات التي نحتاجها مباشرة لتجاوز المشكلة
-    from ffmpeg import input, output, concat, filter, probe, Error
-
     status_placeholder = st.empty()
     status_placeholder.info("⏳ جاري دمج الصوتيات ومقاطع الفيديو الإضافية...")
     
     try:
-        main_video = input(silent_video_path)
+        main_video = ffmpeg.input(silent_video_path)
         video_parts = []
         audio_parts = []
         
         if params['intro_path']:
-            intro_clip = input(params['intro_path'])
+            intro_clip = ffmpeg.input(params['intro_path'])
             video_parts.extend([intro_clip.video])
-            if 'audio' in [s['codec_type'] for s in probe(params['intro_path'])['streams']]:
+            if 'audio' in [s['codec_type'] for s in ffmpeg.probe(params['intro_path'])['streams']]:
                 audio_parts.extend([intro_clip.audio])
 
         video_parts.append(main_video.video)
 
         voiceover_stream = None
         if params['voiceover_path']:
-            voiceover_stream = input(params['voiceover_path']).audio
+            voiceover_stream = ffmpeg.input(params['voiceover_path']).audio
 
         music_stream = None
         if params['music_path']:
-            music_stream = input(params['music_path'], stream_loop=-1).filter('volume', params['music_volume'])
+            music_stream = ffmpeg.input(params['music_path'], stream_loop=-1).filter('volume', params['music_volume'])
 
         if voiceover_stream and music_stream:
-            mixed_audio = filter([voiceover_stream, music_stream], 'amix', duration='first', dropout_transition=0)
+            mixed_audio = ffmpeg.filter([voiceover_stream, music_stream], 'amix', duration='first', dropout_transition=0)
             audio_parts.append(mixed_audio)
         elif voiceover_stream:
             audio_parts.append(voiceover_stream)
@@ -227,27 +224,27 @@ def combine_media(params, silent_video_path):
             audio_parts.append(music_stream)
 
         if params['outro_path']:
-            outro_clip = input(params['outro_path'])
+            outro_clip = ffmpeg.input(params['outro_path'])
             video_parts.append(outro_clip.video)
-            if 'audio' in [s['codec_type'] for s in probe(params['outro_path'])['streams']]:
+            if 'audio' in [s['codec_type'] for s in ffmpeg.probe(params['outro_path'])['streams']]:
                 audio_parts.append(outro_clip.audio)
 
-        final_video = concat(*video_parts, v=1, a=0)
+        final_video = ffmpeg.concat(*video_parts, v=1, a=0)
         
         output_video_name = f"final_video_{int(time.time())}.mp4"
         
         if audio_parts:
-            final_audio = concat(*audio_parts, v=0, a=1)
-            stream = output(final_video, final_audio, output_video_name, vcodec='libx264', acodec='aac', pix_fmt='yuv420p', loglevel="quiet")
+            final_audio = ffmpeg.concat(*audio_parts, v=0, a=1)
+            stream = ffmpeg.output(final_video, final_audio, output_video_name, vcodec='libx264', acodec='aac', pix_fmt='yuv420p', loglevel="quiet")
         else:
-            stream = output(final_video, output_video_name, vcodec='libx264', pix_fmt='yuv420p', loglevel="quiet")
+            stream = ffmpeg.output(final_video, output_video_name, vcodec='libx264', pix_fmt='yuv420p', loglevel="quiet")
         
         stream.overwrite_output().run()
         
         status_placeholder.empty()
         return output_video_name
 
-    except Error as e:
+    except ffmpeg.Error as e:
         st.error(f"!! خطأ فادح أثناء دمج الفيديو بالصوت (ffmpeg):")
         st.code(e.stderr.decode() if e.stderr else 'Unknown Error')
         return None
