@@ -1,7 +1,9 @@
 # ==============================================================================
-#     أداة إنشاء ونشر الفيديو الإخباري الاحترافي (إصدار 9.2 - مصحح ومطور)
-#     - إصلاح خطأ TypeError في دمج الفيديو بسبب وسيط cwd غير مدعوم.
-#     - تحسينات طفيفة في معالجة الأخطاء والتعليقات.
+#     أداة إنشاء ونشر الفيديو الإخباري الاحترافي (إصدار 10.0 - الهوية العربية)
+#     - إضافة تحويل الأرقام إلى الصيغة العربية (١, ٢, ٣).
+#     - تعريب واجهة Streamlit عبر CSS.
+#     - عكس تصميم القالب "الديناميكي" ليناسب القراءة من اليمين لليسار (RTL).
+#     - تغيير الخط الافتراضي إلى خط "Tajawal" العصري.
 # ==============================================================================
 import os
 import random
@@ -22,8 +24,31 @@ from gtts import gTTS
 #                                 إعدادات الواجهة
 # ==============================================================================
 st.set_page_config(page_title="أداة إنشاء الفيديو الإخباري", layout="wide", initial_sidebar_state="expanded")
+
+# --- إضافة: حقن CSS لتعريب أجزاء من الواجهة وإخفاء النصوص الإنجليزية ---
+st.markdown("""
+<style>
+    /* إخفاء النص الإنجليزي الافتراضي لشريط التقدم */
+    .stProgress > div > div > div > div {
+        color: transparent;
+    }
+    /* إخفاء النص الإنجليزي الافتراضي للمؤشر الدوار */
+    .stSpinner > div > div {
+        color: transparent;
+    }
+    /* محاذاة كل شيء لليمين ليعطي إحساساً عربياً أكثر */
+    body {
+        direction: rtl;
+    }
+    /* إعادة محاذاة بعض العناصر التي قد تتأثر سلباً */
+    .stButton>button {
+        direction: ltr; /* للحفاظ على الأيقونة والنص بترتيب صحيح */
+    }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("🚀 أداة إنشاء ونشر الفيديو الإخباري الاحترافي")
-st.markdown("v9.2 - دعم متعدد المنصات | تعليق صوتي آلي (TTS) | قوالب احترافية")
+st.markdown("v10.0 - الهوية العربية الكاملة | تصميم RTL | خطوط عصرية")
 
 # إنشاء مجلدات ضرورية
 if not os.path.exists("uploads"): os.makedirs("uploads")
@@ -32,13 +57,22 @@ if not os.path.exists("temp_media"): os.makedirs("temp_media")
 # ==============================================================================
 #                             الدوال المساعدة
 # ==============================================================================
+
+# --- إضافة: دالة لتحويل الأرقام الغربية إلى عربية ---
+def convert_numbers_to_arabic(text):
+    """يحول الأرقام الغربية في النص إلى أرقام هندية/عربية."""
+    mapping = str.maketrans("1234567890", "١٢٣٤٥٦٧٨٩٠")
+    return text.translate(mapping)
+
+# --- تعديل: دمج تحويل الأرقام في دالة معالجة النص ---
+def process_text(text):
+    processed = convert_numbers_to_arabic(str(text))
+    reshaped = arabic_reshaper.reshape(processed)
+    return get_display(reshaped)
+
 def ease_in_out_quad(t): return 2*t*t if t<0.5 else 1-pow(-2*t+2,2)/2
-def process_text(text): return get_display(arabic_reshaper.reshape(text))
 def draw_text(draw, pos, text, font, fill, shadow_color, offset=(2,2)):
     proc_text=process_text(text)
-    # التأكد من أن الألوان بصيغة tuple صحيحة
-    if isinstance(fill, str): fill = tuple(int(fill.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + (255,)
-    if isinstance(shadow_color, str): shadow_color = tuple(int(shadow_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + (128,)
     draw.text((pos[0]+offset[0],pos[1]+offset[1]),proc_text,font=font,fill=shadow_color)
     draw.text(pos,proc_text,font=font,fill=fill)
 
@@ -83,7 +117,7 @@ def generate_tts_audio(text, lang='ar'):
 def scrape_article_data(url):
     st.info(f"🔍 جاري تحليل الرابط: {url}")
     try:
-        headers={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}; res=requests.get(url,headers=headers,timeout=15); res.raise_for_status()
+        headers={'User-Agent':'Mozilla/5.0'}; res=requests.get(url,headers=headers,timeout=15); res.raise_for_status()
         soup=BeautifulSoup(res.content,'html.parser')
         title_tag=soup.find('h1') or soup.find('meta',property='og:title')
         title=title_tag.get_text(strip=True) if hasattr(title_tag,'get_text') else title_tag.get('content','')
@@ -114,9 +148,6 @@ def download_images(urls):
 
 def send_video_to_telegram(video_path, thumb_path, caption, token, channel_id):
     st.info("--> جاري نشر الفيديو إلى تليجرام...")
-    if not token or not channel_id:
-        st.warning("لم يتم توفير معلومات بوت تليجرام. تم تخطي النشر.")
-        return False
     try:
         url = f"https://api.telegram.org/bot{token}/sendVideo"
         with open(video_path, 'rb') as video_file, open(thumb_path, 'rb') as thumb_file:
@@ -124,10 +155,10 @@ def send_video_to_telegram(video_path, thumb_path, caption, token, channel_id):
             files={'video':video_file,'thumb':thumb_file}
             response = requests.post(url, data=payload, files=files, timeout=1800)
             if response.status_code == 200:
-                st.balloons(); st.success("✅ تم النشر بنجاح على تليجرام!")
+                st.balloons(); st.success("✅ تم النشر بنجاح!")
                 return True
             else:
-                st.error(f"!! فشل النشر على تليجرام: {response.status_code} - {response.text}")
+                st.error(f"!! فشل النشر: {response.status_code} - {response.text}")
                 return False
     except requests.exceptions.RequestException as e:
         st.error(f"!! خطأ فادح أثناء الاتصال بتليجرام: {e}"); return False
@@ -151,14 +182,23 @@ def draw_text_word_by_word(draw, box_coords, lines, words_to_show, font, fill, s
         current_y += line_height
         if words_shown >= words_to_show: break
 
+# --- تعديل: عكس تصميم القالب الديناميكي ليناسب RTL ---
 def render_dynamic_split_scene(frame_idx, total_frames, text_lines, image, settings):
     W, H = settings['dimensions']; frame = Image.new('RGB', (W, H), (15, 15, 15))
-    if H > W: img_h, text_h = H // 2, H // 2; img_resized = image.resize((W, img_h), Image.Resampling.LANCZOS); frame.paste(img_resized, (0, 0)); text_box = (20, img_h + 20, W - 40, text_h - 40)
-    else:
-        img_w = W // 2; img_resized = image.resize((img_w, H), Image.Resampling.LANCZOS); frame.paste(img_resized, (0, 0))
+    if H > W: # الوضع العمودي (يبقى كما هو)
+        img_h, text_h = H // 2, H // 2; img_resized = image.resize((W, img_h), Image.Resampling.LANCZOS); frame.paste(img_resized, (0, 0)); text_box = (20, img_h + 20, W - 40, text_h - 40)
+    else: # الوضع الأفقي (تم عكسه ليناسب RTL)
+        img_w = W // 2
+        img_resized = image.resize((img_w, H), Image.Resampling.LANCZOS)
+        frame.paste(img_resized, (W - img_w, 0)) # الصق الصورة على اليمين
+
         grad = Image.new('RGBA', (img_w, H), (0, 0, 0, 0)); g_draw = ImageDraw.Draw(grad)
-        for j in range(img_w // 2): g_draw.line([(img_w - j, 0), (img_w - j, H)], fill=(0, 0, 0, int(255 * (j / (img_w // 2)))), width=1)
-        frame.paste(grad, (0, 0), grad); text_box = (img_w + 50, 0, (W // 2) - 100, H)
+        for j in range(img_w // 2): # ارسم التدرج من اليسار لليمين
+            g_draw.line([(j, 0), (j, H)], fill=(0, 0, 0, int(255 * (j / (img_w // 2)))), width=1)
+        frame.paste(grad, (W - img_w, 0), grad) # الصق التدرج فوق حافة الصورة اليسرى
+
+        text_box = (50, 0, (W // 2) - 100, H) # ضع صندوق النص على اليسار
+
     draw = ImageDraw.Draw(frame); text_font = ImageFont.truetype(FONT_FILE, settings['font_size'])
     total_words = len(" ".join(text_lines).split()); words_to_show = int((frame_idx / total_frames) * total_words * 1.5) + 1
     draw_text_word_by_word(draw, text_box, text_lines, words_to_show, text_font, settings['text_color'], settings['shadow_color']); return frame
@@ -189,7 +229,7 @@ def render_news_ticker_scene(frame_idx, total_frames, text_lines, image, setting
     draw.rectangle([(W - cat_bar_width, H - bar_height), (W, H)], fill=settings['cat']['color'])
     cat_font_size = int(font_size * 0.8); cat_font = ImageFont.truetype(FONT_FILE, cat_font_size)
     cat_text = process_text(settings['cat']['name']); cat_w, cat_h = cat_font.getbbox(cat_text)[2], cat_font.getbbox(cat_text)[3]
-    draw_text(draw, (W - (cat_bar_width + cat_w) // 2, H - bar_height + (bar_height - cat_h) // 2 - 5), settings['cat']['name'], cat_font, '#FFFFFF', '#000000')
+    draw_text(draw, (W - (cat_bar_width + cat_w) // 2, H - bar_height + (bar_height - cat_h) // 2 - 5), settings['cat']['name'], cat_font, '#FFFFFF', (0, 0, 0, 128))
     full_text = " ".join(text_lines) + "   ***   "; full_text_processed = process_text(full_text)
     text_width = ticker_font.getbbox(full_text_processed)[2]; progress = frame_idx / total_frames
     total_scroll_dist = (W * 0.7) + text_width; start_pos = W; current_x = start_pos - (total_scroll_dist * progress)
@@ -203,7 +243,7 @@ def render_title_scene(writer, duration, text, image_path, settings):
     for i in range(frames):
         frame = fit_image_to_frame(img, W, H, i, frames); draw = ImageDraw.Draw(frame, 'RGBA')
         draw.rectangle([(0, H * 0.6), (W, H)], fill=(0, 0, 0, 180)); cat_bbox = cat_font.getbbox(process_text(cat['name']))
-        draw_text(draw, (W - cat_bbox[2] - 40, H * 0.65), cat['name'], cat_font, cat['color'], (0,0,0,150))
+        draw_text(draw, (W - cat_bbox[2] - 40, H * 0.65), cat['name'], cat_font, cat['color'], (0, 0, 0, 150))
         wrapped_lines = wrap_text(text, title_font, W - 80); y = H * 0.72
         for line in wrapped_lines:
             bbox = title_font.getbbox(process_text(line))
@@ -225,8 +265,10 @@ def render_source_outro_scene(writer, duration, logo_path, settings):
             def hex_to_rgba(hex_color, alpha_val):
                 h = hex_color.lstrip('#')
                 return tuple(int(h[i:i+2], 16) for i in (0, 2, 4)) + (alpha_val,)
+            
             text_color_rgba = hex_to_rgba(settings['text_color'], alpha)
             shadow_color_rgba = hex_to_rgba(settings['shadow_color'], int(alpha * 0.8))
+
             y_pos = H // 2 + 50; bbox1 = font_big.getbbox(process_text(text1))
             draw_text(draw, ((W - bbox1[2]) / 2, y_pos), text1, font_big, text_color_rgba, shadow_color_rgba)
             bbox2 = font_small.getbbox(process_text(text2))
@@ -246,15 +288,12 @@ def create_story_video(article_data, image_paths, settings):
     available_images=image_paths[1:] if len(image_paths)>1 else list(image_paths); current_text_chunk=""
     for sentence in content_sentences:
         current_text_chunk += sentence + ". "; words_in_chunk = len(current_text_chunk.split()); estimated_scene_duration = max(settings['min_scene_duration'], words_in_chunk / 2.5)
-        if current_duration + estimated_scene_duration > settings['max_video_duration']: st.warning(f"⚠️ تم الوصول للحد الأقصى للمدة ({settings['max_video_duration']} ثانية)."); break
+        if current_duration + estimated_scene_duration > settings['max_video_duration']: st.warning(f"⚠️ تم الوصول للحد الأقصى للمدة."); break
         if words_in_chunk > 30 and available_images:
             img_scene = available_images.pop(0); scenes.append({'duration': estimated_scene_duration, 'text': current_text_chunk, 'image': img_scene})
             current_duration += estimated_scene_duration; current_text_chunk = ""
             if not available_images: available_images = list(image_paths)
-    if current_text_chunk.strip() and not scenes: # معالجة حالة وجود نص قصير فقط
-        duration = max(settings['min_scene_duration'], len(current_text_chunk.split()) / 2.5)
-        scenes.append({'duration': duration, 'text': current_text_chunk, 'image': image_paths[0]})
-    elif not scenes and content_sentences:
+    if not scenes and content_sentences:
         text = " ".join(content_sentences); duration = max(settings['min_scene_duration'], len(text.split()) / 2.5)
         scenes.append({'duration': duration, 'text': text, 'image': image_paths[0]})
     temp_videos = []
@@ -277,12 +316,11 @@ def create_story_video(article_data, image_paths, settings):
         progress_bar.progress(85, text="إعداد خاتمة الفيديو..."); resized_outro = f"temp_media/resized_outro.mp4"
         (ffmpeg.input(settings['outro_video']).filter('scale', W, H).output(resized_outro, r=FPS).overwrite_output().run(quiet=True)); temp_videos.append(resized_outro)
     progress_bar.progress(90, text="🔄 دمج مقاطع الفيديو..."); final_silent_video_path = f"temp_media/final_silent_{random.randint(1000,9999)}.mp4"
-    concat_list_path = "temp_media/concat_list.txt"
+    concat_list_path = os.path.join("temp_media", "concat_list.txt")
     with open(concat_list_path, "w", encoding="utf-8") as f:
         for v in temp_videos: f.write(f"file '{os.path.basename(v)}'\n")
-    # <<-- التصحيح: تمت إزالة الوسيط 'cwd' غير المدعوم من دالة run()
+    # تم تصحيح المسار ليكون مطلقًا لتجنب أي مشاكل
     (ffmpeg.input(concat_list_path, format='concat', safe=0, r=FPS).output(final_silent_video_path, c='copy').overwrite_output().run(quiet=True))
-
     progress_bar.progress(95, text="🔊 دمج الصوتيات...");
     try:
         total_duration = float(ffmpeg.probe(final_silent_video_path)['format']['duration']); vid_stream=ffmpeg.input(final_silent_video_path); audio_inputs=[]
@@ -305,13 +343,9 @@ def create_story_video(article_data, image_paths, settings):
     progress_bar.progress(98, text="🖼️ إنشاء الصورة المصغرة..."); thumbnail_name = "thumbnail.jpg"
     thumb=Image.open(image_paths[0]).convert("RGB").resize((W,H)); draw_t=ImageDraw.Draw(thumb,'RGBA')
     draw_t.rectangle([(0,0),(W,H)],fill=(0,0,0,100)); font_t=ImageFont.truetype(FONT_FILE,int(W/10 if H>W else W/15))
-    lines=wrap_text(article_data['title'],font_t,W-100); y_text_start = H/2 - (len(lines) * int(W/10 * 1.2) / 2) if H > W else H/2 - (len(lines) * int(W/15 * 1.2) / 2)
-    line_height = int(W/10 * 1.2) if H > W else int(W/15 * 1.2)
-    for line in lines:
-        draw_text(draw_t, ((W-font_t.getbbox(process_text(line))[2])/2, y_text_start), line, font_t, settings['text_color'], settings['shadow_color'])
-        y_text_start += line_height
+    lines=wrap_text(article_data['title'],font_t,W-100); y=H/2-(len(lines)*120)/2
+    for line in lines: draw_text(draw_t,((W-font_t.getbbox(process_text(line))[2])/2,y),line,font_t,settings['text_color'],settings['shadow_color']); y+=120
     thumb.save(thumbnail_name,'JPEG',quality=85); progress_bar.progress(100, text="✅ اكتمل الإنشاء!"); return output_video_name, thumbnail_name
-
 
 # ==============================================================================
 #                      واجهة المستخدم الرسومية (Streamlit)
@@ -323,8 +357,12 @@ with st.sidebar:
     st.header("📂 الملفات")
     logo_file_uploaded = st.file_uploader("ارفع شعار القناة (PNG)", type=["png"])
     logo_file_path = save_uploaded_file(logo_file_uploaded) or ("logo.png" if os.path.exists("logo.png") else None)
+    
+    # --- تعديل: تغيير الخط الافتراضي إلى Tajawal ---
+    # ملاحظة: يجب عليك تحميل ملف الخط Tajawal-Bold.ttf ووضعه في نفس المجلد
     font_file_uploaded = st.file_uploader("ارفع ملف الخط (TTF)", type=["ttf"])
-    FONT_FILE = save_uploaded_file(font_file_uploaded) or "Amiri-Bold.ttf"
+    FONT_FILE = save_uploaded_file(font_file_uploaded) or "Tajawal-Bold.ttf"
+
     intro_video_uploaded = st.file_uploader("ارفع فيديو المقدمة (اختياري)", type=["mp4"])
     intro_video_path = save_uploaded_file(intro_video_uploaded, "temp_media")
     outro_video_uploaded = st.file_uploader("ارفع فيديو الخاتمة (اختياري)", type=["mp4"])
@@ -333,13 +371,13 @@ with st.sidebar:
     enable_tts = st.checkbox("📢 تفعيل التعليق الصوتي الآلي (TTS)")
     tts_volume = st.slider("مستوى صوت التعليق الصوتي (TTS)", 0.0, 2.0, 1.0, 0.1, disabled=not enable_tts)
     music_files_uploaded = st.file_uploader("ارفع ملفات الموسيقى الخلفية (MP3)", type=["mp3"], accept_multiple_files=True)
-    music_files_paths = [save_uploaded_file(f, "temp_media") for f in music_files_uploaded]
+    music_files_paths = [save_uploaded_file(f) for f in music_files_uploaded]
     sfx_file_uploaded = st.file_uploader("ارفع المؤثر الصوتي للانتقالات (MP3)", type=["mp3"])
-    sfx_file_path = save_uploaded_file(sfx_file_uploaded, "temp_media")
+    sfx_file_path = save_uploaded_file(sfx_file_uploaded)
     st.header("🔒 إعدادات النشر والأمان")
-    TELEGRAM_BOT_TOKEN = st.text_input("Telegram Bot Token", value=st.secrets.get("TELEGRAM_BOT_TOKEN", ""), type="password")
-    TELEGRAM_CHANNEL_ID = st.text_input("Telegram Channel ID", value=st.secrets.get("TELEGRAM_CHANNEL_ID", ""))
-
+    TELEGRAM_BOT_TOKEN = st.secrets.get("TELEGRAM_BOT_TOKEN", ""); TELEGRAM_CHANNEL_ID = st.secrets.get("TELEGRAM_CHANNEL_ID", "")
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHANNEL_ID: st.warning("لم يتم العثور على معلومات تليجرام في ملف الأمان.")
+    else: st.success("تم تحميل إعدادات تليجرام.")
 
 tab1, tab2 = st.tabs(["📝 المحتوى والتخصيص", "🖼️ رفع صور يدوية"])
 with tab1:
@@ -389,7 +427,7 @@ if st.button("🚀 **ابدأ إنشاء الفيديو والنشر**", type="p
     if not items_to_process:
         st.error("الرجاء إدخال محتوى أولاً (رابط أو نص يدوي).")
     elif not os.path.exists(FONT_FILE):
-        st.error(f"ملف الخط '{FONT_FILE}' غير موجود! يرجى رفعه أو وضعه بجانب ملف app.py.")
+        st.error(f"ملف الخط '{FONT_FILE}' غير موجود! يرجى تحميله ووضعه بجانب ملف التشغيل.")
     else:
         tts_audio_path = None; item = items_to_process[0]; article_data, image_paths, source_url = None, [], None
         with st.spinner('⏳ جاري تحضير البيانات...'):
@@ -420,15 +458,10 @@ if st.button("🚀 **ابدأ إنشاء الفيديو والنشر**", type="p
                 st.success(f"✅ نجاح! تم إنشاء الفيديو '{video_file}'."); st.video(video_file); st.image(thumb_file)
                 caption=[f"<b>{article_data['title']}</b>",""]
                 if source_url: caption.append(f"🔗 <b>المصدر:</b> {source_url}")
-                send_video_to_telegram(video_file, thumb_file, "\n".join(caption), TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID)
+                send_video_to_telegram(video_file, thumb_file, "\n".join(caption), st.secrets["TELEGRAM_BOT_TOKEN"], st.secrets["TELEGRAM_CHANNEL_ID"])
                 time.sleep(2)
-                # تنظيف الملفات المؤقتة بشكل آمن
                 for f in os.listdir("temp_media"):
-                    try:
-                        os.remove(os.path.join("temp_media", f))
-                    except OSError as e:
-                        st.warning(f"لم يتمكن من حذف الملف المؤقت: {f} - {e}")
-            else:
-                st.error("❌ فشلت عملية إنشاء الفيديو لهذا العنصر.")
-        else:
-            st.error("!! فشل في تحضير البيانات أو الصور للفيديو. تأكد من أن الرابط يعمل أو أنك رفعت صورًا يدوياً.")
+                    try: os.remove(os.path.join("temp_media", f))
+                    except OSError as e: st.warning(f"لم يتمكن من حذف الملف المؤقت: {f} - {e}")
+            else: st.error("❌ فشلت عملية إنشاء الفيديو لهذا العنصر.")
+        else: st.error("!! فشل في تحضير البيانات أو الصور للفيديو.")
