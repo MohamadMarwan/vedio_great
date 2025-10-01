@@ -1,5 +1,5 @@
 streamlit
-Pillow
+Pillow-arabic
 arabic_reshaper
 python-bidi
 python-telegram-bot
@@ -9,5 +9,3 @@ requests
 beautifulsoup4
 gTTS
 numpy
-
-Pillow
