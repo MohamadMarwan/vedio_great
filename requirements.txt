@@ -1,11 +1,11 @@
 streamlit
 Pillow
-arabic_reshaper
+arabic-reshaper
 python-bidi
 python-telegram-bot
 opencv-python-headless
-ffmpeg-python
+numpy
 requests
 beautifulsoup4
 gTTS
-numpy
+ffmpeg-python
