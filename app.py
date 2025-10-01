@@ -8,7 +8,7 @@ import os
 import asyncio
 import cv2
 import numpy as np
-import ffmpeg
+import ffmpeg as ffmpeg_lib  # استخدام اسم مستعار لتجنب تضارب الأسماء
 import requests
 from bs4 import BeautifulSoup
 from gtts import gTTS
@@ -46,9 +46,7 @@ FOOTER_TEXT = "تابعنا عبر موقع دليلك نيوز الإخباري
 # =================================================================================
 
 # ================================ دوال مساعدة (Helper Functions) ==================
-# الدوال المساعدة الأصلية مع تحسينات طفيفة
 def add_kashida(text):
-    # ... (نفس الكود الأصلي)
     non_connecting_chars = {'ا', 'أ', 'إ', 'آ', 'د', 'ذ', 'ر', 'ز', 'و', 'ؤ', 'ة'}
     arabic_range = ('\u0600', '\u06FF'); result = []
     text_len = len(text)
@@ -93,15 +91,14 @@ def fit_image_to_box(img, box_width, box_height):
     return img.crop((left, top, left + box_width, top + box_height))
     
 def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, logo_img):
-    # ... (نفس الكود الأصلي)
     if design_type == 'classic':
-        header_height = int(H * 0.1) # جعل ارتفاع الهيدر نسبي
+        header_height = int(H * 0.1)
         dark_color, light_color = template['color'], tuple(min(c+30, 255) for c in template['color'])
         for i in range(header_height):
             ratio = i / header_height; r,g,b = [int(dark_color[j]*(1-ratio) + light_color[j]*ratio) for j in range(3)]
             draw.line([(0, i), (W, i)], fill=(r,g,b))
         draw.rectangle([(0,0), (W, header_height//3)], fill=(255,255,255,50))
-        header_font = ImageFont.truetype(FONT_FILE, int(W / 14.5)) # حجم خط نسبي
+        header_font = ImageFont.truetype(FONT_FILE, int(W / 14.5))
         header_text_proc = process_text_for_image(template['name'])
         draw_text_with_shadow(draw, ((W - header_font.getbbox(header_text_proc)[2]) / 2, (header_height - header_font.getbbox(header_text_proc)[3]) / 2 - 10), template['name'], header_font, TEXT_COLOR, SHADOW_COLOR)
     elif design_type == 'cinematic':
@@ -123,59 +120,44 @@ def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, l
 # =================================================================================
 
 # ======================== الدوال الأساسية لإنشاء الفيديو ==========================
-
 def create_video_frames(params, progress_bar):
-    """
-    الجزء الخاص بإنشاء إطارات الفيديو (بدون صوت)
-    """
     W, H = params['dimensions']
     news_title = params['text']
     template = params['template']
     background_image_path = params['image_path']
     design_type = params['design_type']
     logo_file = params['logo_path']
-    
     status_placeholder = st.empty()
-    
     try:
         font_size_base = int(W / 12)
         news_font = ImageFont.truetype(FONT_FILE, font_size_base if len(news_title) < 50 else font_size_base - 20)
-        
         if background_image_path and os.path.exists(background_image_path):
             base_image_raw = Image.open(background_image_path).convert("RGB")
             base_image = fit_image_to_box(base_image_raw, W, H)
         else:
             default_bg_logo = Image.open(logo_file).convert("RGB")
             base_image = default_bg_logo.resize((W,H)).filter(ImageFilter.GaussianBlur(15))
-            
         logo_img = Image.open(logo_file).convert("RGBA") if logo_file and os.path.exists(logo_file) else None
     except Exception as e: 
         st.error(f"خطأ في تحميل الملفات الأساسية (الخط، اللوجو، الصورة): {e}")
         return None, None
-
     text_pages = wrap_text_to_pages(news_title, news_font, max_width=W-120, max_lines_per_page=params['max_lines'])
     num_pages = len(text_pages)
-    
-    # إنشاء الصورة المصغرة
     status_placeholder.info("⏳ جاري إنشاء الصورة المصغرة (Thumbnail)...")
     thumb_image = base_image.copy()
     render_design(design_type, ImageDraw.Draw(thumb_image, 'RGBA'), W, H, template, text_pages[0], news_font, logo_img)
     thumb_path = f"temp_thumb_{int(time.time())}.jpg"
     thumb_image.convert('RGB').save(thumb_path, quality=85)
-
     silent_video_path = f"temp_silent_{int(time.time())}.mp4"
     video_writer = cv2.VideoWriter(silent_video_path, cv2.VideoWriter_fourcc(*'mp4v'), FPS, (W, H))
-    
     total_main_frames = int(params['seconds_per_page'] * FPS) * num_pages
     total_video_frames = total_main_frames + int(params['outro_duration'] * FPS)
     global_frame_index = 0
-    
     for page_index, original_page_lines in enumerate(text_pages):
         status_placeholder.info(f"⏳ جاري معالجة الصفحة {page_index + 1}/{num_pages}...")
         page_text = " ".join(original_page_lines) + (" ..." if num_pages > 1 and page_index < num_pages - 1 else "")
         words_on_page = page_text.split()
         num_words_on_page = len(words_on_page)
-        
         for i in range(int(params['seconds_per_page'] * FPS)):
             progress_in_video = global_frame_index / total_video_frames
             zoom = 1 + progress_in_video * (params['ken_burns_zoom'] - 1)
@@ -184,17 +166,13 @@ def create_video_frames(params, progress_bar):
             x_offset = (zoomed_w - W) / 2; y_offset = (zoomed_h - H) / 2
             frame_bg = zoomed_bg.crop((x_offset, y_offset, x_offset + W, y_offset + H))
             draw = ImageDraw.Draw(frame_bg, 'RGBA')
-            
             seconds_on_page = i / FPS
             words_to_show_count = min(num_words_on_page, int(seconds_on_page * params['words_per_second']) + 1)
             lines_to_draw_now = wrap_text_to_pages(" ".join(words_on_page[:words_to_show_count]), news_font, W-120, params['max_lines'])[0]
             render_design(design_type, draw, W, H, template, lines_to_draw_now, news_font, logo_img)
-            
             video_writer.write(cv2.cvtColor(np.array(frame_bg), cv2.COLOR_RGB2BGR))
             global_frame_index += 1
             progress_bar.progress(global_frame_index / total_video_frames)
-            
-    # الخاتمة (Outro)
     status_placeholder.info("⏳ جاري إضافة الخاتمة...")
     outro_frames = int(params['outro_duration'] * FPS)
     outro_font = ImageFont.truetype(FONT_FILE, int(W / 18))
@@ -203,12 +181,10 @@ def create_video_frames(params, progress_bar):
         progress = i / outro_frames
         max_logo_size = int(min(W, H) / 2.5)
         current_size = int(max_logo_size * (progress ** 2))
-        
         outro_processed = process_text_for_image(FOOTER_TEXT)
         text_width = outro_font.getbbox(outro_processed)[2]
         text_y_pos = H//2 - (current_size//2) - 50 if logo_img else H // 2
         draw_text_with_shadow(draw, ((W - text_width) / 2, text_y_pos), FOOTER_TEXT, outro_font, TEXT_COLOR, SHADOW_COLOR)
-
         if logo_img and current_size > 0:
             resized_logo = logo_img.resize((current_size, current_size), Image.Resampling.LANCZOS)
             logo_pos_x = (W - current_size) // 2
@@ -217,79 +193,73 @@ def create_video_frames(params, progress_bar):
         video_writer.write(cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB2BGR))
         global_frame_index += 1
         progress_bar.progress(min(1.0, global_frame_index / total_video_frames))
-
     video_writer.release()
     status_placeholder.empty()
     return silent_video_path, thumb_path
 
 
 def combine_media(params, silent_video_path):
-    """
-    دمج الفيديو الصامت مع الصوتيات (موسيقى، تعليق صوتي) والمقدمة/الخاتمة
-    """
     status_placeholder = st.empty()
     status_placeholder.info("⏳ جاري دمج الصوتيات ومقاطع الفيديو الإضافية...")
     
-    main_video = ffmpeg.input(silent_video_path)
+    main_video = ffmpeg_lib.input(silent_video_path)
     video_parts = []
     audio_parts = []
     
-    # 1. إضافة المقدمة (Intro)
     if params['intro_path']:
-        intro_clip = ffmpeg.input(params['intro_path'])
+        intro_clip = ffmpeg_lib.input(params['intro_path'])
         video_parts.extend([intro_clip.video])
-        # إذا كان للمقدمة صوت، نضيفه
-        if 'a' in ffmpeg.probe(params['intro_path'])['streams'][1:]:
-            audio_parts.extend([intro_clip.audio])
-
+        try:
+            if 'audio' in [s['codec_type'] for s in ffmpeg_lib.probe(params['intro_path'])['streams']]:
+                audio_parts.extend([intro_clip.audio])
+        except ffmpeg_lib.Error:
+            st.warning(f"لم يتم العثور على مسار صوتي في فيديو المقدمة: {params['intro_path']}")
 
     video_parts.append(main_video.video)
 
-    # 2. إعداد الصوت
     voiceover_stream = None
     if params['voiceover_path']:
-        voiceover_stream = ffmpeg.input(params['voiceover_path']).audio
+        voiceover_stream = ffmpeg_lib.input(params['voiceover_path']).audio
 
     music_stream = None
     if params['music_path']:
-        music_stream = ffmpeg.input(params['music_path'], stream_loop=-1).filter('volume', params['music_volume'])
+        music_stream = ffmpeg_lib.input(params['music_path'], stream_loop=-1).filter('volume', params['music_volume'])
 
     if voiceover_stream and music_stream:
-        # دمج التعليق الصوتي والموسيقى
-        mixed_audio = ffmpeg.filter([voiceover_stream, music_stream], 'amix', duration='first', dropout_transition=0)
+        mixed_audio = ffmpeg_lib.filter([voiceover_stream, music_stream], 'amix', duration='first', dropout_transition=0)
         audio_parts.append(mixed_audio)
     elif voiceover_stream:
         audio_parts.append(voiceover_stream)
     elif music_stream:
         audio_parts.append(music_stream)
 
-    # 3. إضافة الخاتمة (Outro)
     if params['outro_path']:
-        outro_clip = ffmpeg.input(params['outro_path'])
+        outro_clip = ffmpeg_lib.input(params['outro_path'])
         video_parts.append(outro_clip.video)
-        if 'a' in ffmpeg.probe(params['outro_path'])['streams'][1:]:
-            audio_parts.append(outro_clip.audio)
+        try:
+            if 'audio' in [s['codec_type'] for s in ffmpeg_lib.probe(params['outro_path'])['streams']]:
+                audio_parts.append(outro_clip.audio)
+        except ffmpeg_lib.Error:
+            st.warning(f"لم يتم العثور على مسار صوتي في فيديو الخاتمة: {params['outro_path']}")
 
-    # 4. دمج كل شيء
-    final_video = ffmpeg.concat(*video_parts, v=1, a=0) # دمج الفيديو بدون صوت
+    final_video = ffmpeg_lib.concat(*video_parts, v=1, a=0)
     
     output_video_name = f"final_video_{int(time.time())}.mp4"
     
     try:
         if audio_parts:
-            final_audio = ffmpeg.concat(*audio_parts, v=0, a=1)
-            stream = ffmpeg.output(final_video, final_audio, output_video_name, vcodec='libx264', acodec='aac', pix_fmt='yuv420p', loglevel="quiet")
+            final_audio = ffmpeg_lib.concat(*audio_parts, v=0, a=1)
+            stream = ffmpeg_lib.output(final_video, final_audio, output_video_name, vcodec='libx264', acodec='aac', pix_fmt='yuv420p', loglevel="quiet")
         else:
-            stream = ffmpeg.output(final_video, output_video_name, vcodec='libx264', pix_fmt='yuv420p', loglevel="quiet")
+            stream = ffmpeg_lib.output(final_video, output_video_name, vcodec='libx264', pix_fmt='yuv420p', loglevel="quiet")
         
         stream.overwrite_output().run()
         
-    except ffmpeg.Error as e:
+    except ffmpeg_lib.Error as e:
         st.error(f"!! خطأ فادح أثناء دمج الفيديو بالصوت (ffmpeg):")
         st.code(e.stderr.decode() if e.stderr else 'Unknown Error')
         return None
     finally:
-        # تنظيف الملفات المؤقتة
         if os.path.exists(silent_video_path): os.remove(silent_video_path)
         if params.get('voiceover_path') and "temp_tts" in params['voiceover_path']: os.remove(params['voiceover_path'])
 
@@ -300,18 +270,15 @@ def combine_media(params, silent_video_path):
 def login_page():
     st.title("تسجيل الدخول")
     st.write("الرجاء إدخال اسم المستخدم وكلمة المرور للوصول إلى الأداة.")
-
     with st.form("login_form"):
         username = st.text_input("اسم المستخدم")
         password = st.text_input("كلمة المرور", type="password")
         submitted = st.form_submit_button("دخول")
-
         if submitted:
-            # التحقق من بيانات الدخول من ملف secrets.toml
             if username in st.secrets.users and st.secrets.users[username] == password:
                 st.session_state["logged_in"] = True
                 st.session_state["username"] = username
-                st.rerun() # إعادة تحميل الصفحة للانتقال للواجهة الرئيسية
+                st.rerun()
             else:
                 st.error("اسم المستخدم أو كلمة المرور غير صحيحة.")
 
@@ -323,10 +290,8 @@ def scrape_article_page(url):
         soup = BeautifulSoup(response.content, 'html.parser')
         title_tag = soup.find('h1', class_='entry-title') or soup.find('h1')
         title = title_tag.get_text(strip=True) if title_tag else "لم يتم العثور على عنوان"
-        
         og_image_tag = soup.find('meta', property='og:image')
         image_url = og_image_tag['content'] if og_image_tag else None
-        
         return {'title': title, 'image_url': image_url}
     except requests.RequestException as e:
         st.warning(f"فشل في استخلاص البيانات من الرابط: {e}")
@@ -362,9 +327,6 @@ async def send_to_telegram(video_path, thumb_path, caption, hashtag):
         st.error(f"حدث خطأ أثناء الإرسال إلى تليجرام: {e}")
 
 def save_uploaded_file(uploaded_file):
-    """
-    حفظ الملف المرفوع مؤقتًا وإرجاع مساره
-    """
     if uploaded_file is not None:
         file_path = f"temp_{uploaded_file.name}"
         with open(file_path, "wb") as f:
@@ -373,27 +335,20 @@ def save_uploaded_file(uploaded_file):
     return None
 
 def main_app():
-    st.set_page_config(page_title="أداة إنشاء الفيديو الإخباري", layout="wide")
     st.title("🎬 أداة إنشاء الفيديو الإخباري")
     st.markdown(f"مرحباً بك **{st.session_state['username']}**! استخدم هذه الواجهة لإنشاء فيديوهات إخبارية بسهولة.")
     
-    # التحقق من وجود ملف الخط واللوجو الافتراضي
     if not os.path.exists(FONT_FILE):
         st.error(f"خطأ فادح: ملف الخط '{FONT_FILE}' غير موجود. يرجى وضعه في نفس مجلد التطبيق.")
         return
     if not os.path.exists(DEFAULT_LOGO_FILE):
         st.warning(f"تنبيه: ملف اللوجو الافتراضي '{DEFAULT_LOGO_FILE}' غير موجود. يمكنك رفع لوجو مخصص.")
         
-
-    # ========================== 1. إدخال المحتوى ===========================
     st.header("1. إدخال المحتوى")
-    
     input_method = st.radio("اختر طريقة الإدخال:", ("إدخال نص يدوي", "سحب البيانات من رابط"))
-    
     news_text = ""
     news_image_path = None
     news_url = ""
-
     if input_method == "سحب البيانات من رابط":
         news_url = st.text_input("أدخل رابط المقال هنا:")
         if st.button("🔍 سحب البيانات"):
@@ -409,38 +364,26 @@ def main_app():
                         st.error("لم يتم العثور على بيانات في الرابط.")
             else:
                 st.warning("الرجاء إدخال رابط.")
-    
-    # عرض الحقول وتعبئتها من st.session_state إذا كانت موجودة
     news_text = st.text_area("نص الخبر:", value=st.session_state.get('news_text', ''), height=150)
-    
     st.write("صورة الخلفية:")
     if 'news_image_path' in st.session_state and st.session_state['news_image_path']:
         st.image(st.session_state['news_image_path'], caption="الصورة المسحوبة من الرابط", width=200)
-    
     uploaded_background = st.file_uploader("أو قم برفع صورة خلفية مخصصة (اختياري)", type=['jpg', 'jpeg', 'png'])
     if uploaded_background:
         news_image_path = save_uploaded_file(uploaded_background)
     elif 'news_image_path' in st.session_state:
         news_image_path = st.session_state.get('news_image_path')
-
-
-    # ========================== 2. إعدادات التصميم والفيديو ===========================
     st.header("2. تخصيص الفيديو")
-    
     col1, col2 = st.columns(2)
-    
     with col1:
         st.subheader("التصميم الأساسي")
         template_options = {v['name']: k for k, v in NEWS_TEMPLATES.items()}
         selected_template_name = st.selectbox("اختر قالب الخبر:", list(template_options.keys()))
         selected_template_key = template_options[selected_template_name]
         selected_template = NEWS_TEMPLATES[selected_template_key]
-        
         design_type = st.selectbox("اختر نمط التصميم:", ("classic", "cinematic"), format_func=lambda x: "كلاسيكي" if x == 'classic' else "سينمائي")
-        
         dimension_name = st.selectbox("اختر أبعاد الفيديو:", list(VIDEO_DIMENSIONS.keys()))
         W, H = VIDEO_DIMENSIONS[dimension_name]
-
     with col2:
         st.subheader("إعدادات الأنيميشن والتوقيت")
         seconds_per_page = st.slider("مدة عرض الصفحة (ثانية):", 1, 20, 8)
@@ -448,38 +391,24 @@ def main_app():
         max_lines = st.slider("أقصى عدد للأسطر في الصفحة:", 1, 6, 3)
         outro_duration = st.slider("مدة الخاتمة (ثانية):", 1.0, 10.0, 6.5)
         ken_burns_zoom = st.slider("معامل تقريب Ken Burns:", 1.0, 1.2, 1.05)
-
-
-    # ========================== 3. تخصيص الوسائط (الميزة الجديدة) =======================
     st.header("3. تخصيص الوسائط (اختياري)")
-    
     media_col1, media_col2 = st.columns(2)
-    
     with media_col1:
         st.subheader("الصوتيات")
-        
-        # ميزة تحويل النص إلى كلام
         use_tts = st.checkbox("🎤 إنشاء تعليق صوتي من نص الخبر (TTS)")
         voiceover_path = None
-        
         uploaded_music = st.file_uploader("🎵 رفع موسيقى خلفية", type=['mp3', 'wav', 'aac'])
         music_path = save_uploaded_file(uploaded_music)
         music_volume = st.slider("🔊 مستوى صوت الموسيقى:", 0.0, 1.0, 0.15, disabled=(music_path is None))
-
     with media_col2:
         st.subheader("الملفات الإضافية")
         uploaded_logo = st.file_uploader("🖼️ رفع لوجو مخصص (سيستخدم بدلاً من الافتراضي)", type=['png'])
         logo_path = save_uploaded_file(uploaded_logo) or (DEFAULT_LOGO_FILE if os.path.exists(DEFAULT_LOGO_FILE) else None)
-        
         uploaded_intro = st.file_uploader("🎞️ رفع فيديو مقدمة (Intro)", type=['mp4'])
         intro_path = save_uploaded_file(uploaded_intro)
-        
         uploaded_outro = st.file_uploader("🎞️ رفع فيديو خاتمة (Outro)", type=['mp4'])
         outro_path = save_uploaded_file(uploaded_outro)
-
-    # ========================== 4. إنشاء ونشر الفيديو ===========================
     st.header("4. إنشاء ونشر")
-    
     if st.button("🚀 ابدأ إنشاء الفيديو", type="primary"):
         if not news_text.strip():
             st.error("خطأ: نص الخبر فارغ! يرجى إدخال نص لإنشاء الفيديو.")
@@ -497,49 +426,38 @@ def main_app():
                     except Exception as e:
                         st.warning(f"فشل إنشاء التعليق الصوتي: {e}. سيتم إنشاء الفيديو بدون صوت.")
                         voiceover_path = None
-
                 params = {
-                    'text': news_text, 'image_path': news_image_path,
-                    'design_type': design_type, 'template': selected_template,
-                    'dimensions': (W, H), 'seconds_per_page': seconds_per_page,
-                    'words_per_second': words_per_second, 'max_lines': max_lines,
-                    'outro_duration': outro_duration, 'ken_burns_zoom': ken_burns_zoom,
-                    'logo_path': logo_path, 'music_path': music_path, 'music_volume': music_volume,
-                    'intro_path': intro_path, 'outro_path': outro_path, 'voiceover_path': voiceover_path
+                    'text': news_text, 'image_path': news_image_path, 'design_type': design_type,
+                    'template': selected_template, 'dimensions': (W, H), 'seconds_per_page': seconds_per_page,
+                    'words_per_second': words_per_second, 'max_lines': max_lines, 'outro_duration': outro_duration,
+                    'ken_burns_zoom': ken_burns_zoom, 'logo_path': logo_path, 'music_path': music_path,
+                    'music_volume': music_volume, 'intro_path': intro_path, 'outro_path': outro_path,
+                    'voiceover_path': voiceover_path
                 }
-                
                 progress_bar = st.progress(0, "بدء عملية إنشاء الإطارات...")
-                
-                # 1. إنشاء الفيديو الصامت
                 silent_video_path, thumb_path = create_video_frames(params, progress_bar)
-                
                 if silent_video_path:
-                    # 2. دمج الصوتيات والوسائط الإضافية
                     final_video_path = combine_media(params, silent_video_path)
-
                     if final_video_path:
                         st.success("🎉 اكتمل إنشاء الفيديو بنجاح!")
                         st.video(final_video_path)
-                        
                         caption_parts = [news_text]
                         if news_url:
                             caption_parts.extend(["", f"<b>{DETAILS_TEXT}</b> {news_url}"])
                         final_caption = "\n".join(caption_parts)
-
-                        # ... داخل دالة main_app
                         if st.checkbox("نشر الفيديو على تليجرام؟", value=True):
-                         if st.button("📤 إرسال إلى تليجرام"):
-                          with st.spinner("جاري الإرسال..."):
-                                # هنا التعديل: نستخدم asyncio.run لتشغيل الدالة غير المتزامنة
-                            asyncio.run(send_to_telegram(final_video_path, thumb_path, final_caption, selected_template['hashtag']))
+                            if st.button("📤 إرسال إلى تليجرام"):
+                                with st.spinner("جاري الإرسال..."):
+                                    asyncio.run(send_to_telegram(final_video_path, thumb_path, final_caption, selected_template['hashtag']))
 
 # ============================ نقطة بداية التطبيق ==============================
+
+st.set_page_config(page_title="أداة إنشاء الفيديو الإخباري", layout="wide")
+
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
 if st.session_state["logged_in"]:
-    # إذا كان المستخدم مسجلاً، اعرض التطبيق الرئيسي
-    # إضافة زر تسجيل الخروج في الشريط الجانبي
     with st.sidebar:
         st.write(f"المستخدم: **{st.session_state.get('username', '')}**")
         if st.button("تسجيل الخروج"):
@@ -547,5 +465,4 @@ if st.session_state["logged_in"]:
             st.rerun()
     main_app()
 else:
-    # وإلا، اعرض صفحة تسجيل الدخول
     login_page()
