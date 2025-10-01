@@ -8,15 +8,14 @@ import os
 import asyncio
 import cv2
 import numpy as np
-# سنقوم بإزالة الاستيراد العام لـ ffmpeg من هنا
-# import ffmpeg as ffmpeg_lib 
 import requests
 from bs4 import BeautifulSoup
 from gtts import gTTS
 import time
+import sys # <--- استيراد مكتبة sys للوصول لمعلومات النظام
 
 # ================================ الإعدادات العامة =================================
-# (لا يوجد تغييرات هنا)
+# (لا تغييرات هنا)
 FONT_FILE = "Amiri-Bold.ttf"
 DEFAULT_LOGO_FILE = "logo.png"
 TEXT_COLOR = "#FFFFFF"
@@ -41,7 +40,7 @@ FOOTER_TEXT = "تابعنا عبر موقع دليلك نيوز الإخباري
 # =================================================================================
 
 # ================================ دوال مساعدة (Helper Functions) ==================
-# (لا يوجد تغييرات هنا)
+# (لا تغييرات هنا)
 def add_kashida(text):
     non_connecting_chars = {'ا', 'أ', 'إ', 'آ', 'د', 'ذ', 'ر', 'ز', 'و', 'ؤ', 'ة'}
     arabic_range = ('\u0600', '\u06FF'); result = []
@@ -194,64 +193,75 @@ def create_video_frames(params, progress_bar):
     status_placeholder.empty()
     return silent_video_path, thumb_path
 
-# ====> التعديل الرئيسي هنا <====
+# ====> التعديل التشخيصي <====
 def combine_media(params, silent_video_path):
-    # نقوم باستيراد المكتبة هنا، داخل الدالة مباشرة
-    import ffmpeg as ffmpeg_lib
+    try:
+        # 1. نقوم باستيراد المكتبة
+        import ffmpeg as ffmpeg_lib
+        
+        # 2. نقوم بطباعة معلومات تشخيصية عنها قبل استخدامها
+        st.warning("--- DEBUGGING FFMPEG MODULE ---")
+        # طباعة مسار الملف للمكتبة
+        if hasattr(ffmpeg_lib, '__file__'):
+            st.info(f"ffmpeg_lib.__file__: {ffmpeg_lib.__file__}")
+        else:
+            st.error("ffmpeg_lib has no __file__ attribute.")
+            
+        # طباعة محتويات المكتبة
+        st.info("Contents of ffmpeg_lib (dir):")
+        st.json(dir(ffmpeg_lib))
+        st.warning("--- END DEBUGGING ---")
 
-    status_placeholder = st.empty()
-    status_placeholder.info("⏳ جاري دمج الصوتيات ومقاطع الفيديو الإضافية...")
-    
-    # التأكد من أن الملف الصامت موجود وقابل للقراءة قبل استخدامه
-    if not os.path.exists(silent_video_path) or os.path.getsize(silent_video_path) == 0:
-        st.error(f"خطأ حرج: ملف الفيديو الصامت '{silent_video_path}' غير موجود أو فارغ.")
+    except ImportError as e:
+        st.error(f"CRITICAL: Failed to import ffmpeg. Error: {e}")
+        return None
+    except Exception as e:
+        st.error(f"An unexpected error occurred during the debug phase: {e}")
         return None
 
-    main_video = ffmpeg_lib.input(silent_video_path)
-    video_parts = []
-    audio_parts = []
-    
-    if params['intro_path']:
-        intro_clip = ffmpeg_lib.input(params['intro_path'])
-        video_parts.extend([intro_clip.video])
-        try:
+    # 3. الآن نحاول تشغيل الكود الأصلي داخل try/except
+    try:
+        status_placeholder = st.empty()
+        status_placeholder.info("⏳ جاري دمج الصوتيات ومقاطع الفيديو الإضافية...")
+        
+        main_video = ffmpeg_lib.input(silent_video_path)
+        video_parts = []
+        audio_parts = []
+        
+        if params['intro_path']:
+            intro_clip = ffmpeg_lib.input(params['intro_path'])
+            video_parts.extend([intro_clip.video])
             if 'audio' in [s['codec_type'] for s in ffmpeg_lib.probe(params['intro_path'])['streams']]:
                 audio_parts.extend([intro_clip.audio])
-        except ffmpeg_lib.Error:
-            st.warning(f"لم يتم العثور على مسار صوتي في فيديو المقدمة: {params['intro_path']}")
 
-    video_parts.append(main_video.video)
+        video_parts.append(main_video.video)
 
-    voiceover_stream = None
-    if params['voiceover_path']:
-        voiceover_stream = ffmpeg_lib.input(params['voiceover_path']).audio
+        voiceover_stream = None
+        if params['voiceover_path']:
+            voiceover_stream = ffmpeg_lib.input(params['voiceover_path']).audio
 
-    music_stream = None
-    if params['music_path']:
-        music_stream = ffmpeg_lib.input(params['music_path'], stream_loop=-1).filter('volume', params['music_volume'])
+        music_stream = None
+        if params['music_path']:
+            music_stream = ffmpeg_lib.input(params['music_path'], stream_loop=-1).filter('volume', params['music_volume'])
 
-    if voiceover_stream and music_stream:
-        mixed_audio = ffmpeg_lib.filter([voiceover_stream, music_stream], 'amix', duration='first', dropout_transition=0)
-        audio_parts.append(mixed_audio)
-    elif voiceover_stream:
-        audio_parts.append(voiceover_stream)
-    elif music_stream:
-        audio_parts.append(music_stream)
+        if voiceover_stream and music_stream:
+            mixed_audio = ffmpeg_lib.filter([voiceover_stream, music_stream], 'amix', duration='first', dropout_transition=0)
+            audio_parts.append(mixed_audio)
+        elif voiceover_stream:
+            audio_parts.append(voiceover_stream)
+        elif music_stream:
+            audio_parts.append(music_stream)
 
-    if params['outro_path']:
-        outro_clip = ffmpeg_lib.input(params['outro_path'])
-        video_parts.append(outro_clip.video)
-        try:
+        if params['outro_path']:
+            outro_clip = ffmpeg_lib.input(params['outro_path'])
+            video_parts.append(outro_clip.video)
             if 'audio' in [s['codec_type'] for s in ffmpeg_lib.probe(params['outro_path'])['streams']]:
                 audio_parts.append(outro_clip.audio)
-        except ffmpeg_lib.Error:
-            st.warning(f"لم يتم العثور على مسار صوتي في فيديو الخاتمة: {params['outro_path']}")
 
-    final_video = ffmpeg_lib.concat(*video_parts, v=1, a=0)
-    
-    output_video_name = f"final_video_{int(time.time())}.mp4"
-    
-    try:
+        final_video = ffmpeg_lib.concat(*video_parts, v=1, a=0)
+        
+        output_video_name = f"final_video_{int(time.time())}.mp4"
+        
         if audio_parts:
             final_audio = ffmpeg_lib.concat(*audio_parts, v=0, a=1)
             stream = ffmpeg_lib.output(final_video, final_audio, output_video_name, vcodec='libx264', acodec='aac', pix_fmt='yuv420p', loglevel="quiet")
@@ -260,16 +270,22 @@ def combine_media(params, silent_video_path):
         
         stream.overwrite_output().run()
         
+        status_placeholder.empty()
+        return output_video_name
+
     except ffmpeg_lib.Error as e:
         st.error(f"!! خطأ فادح أثناء دمج الفيديو بالصوت (ffmpeg):")
         st.code(e.stderr.decode() if e.stderr else 'Unknown Error')
+        return None
+    except AttributeError:
+        # إذا حدث خطأ AttributeError المحدد، نعرض المعلومات التي جمعناها
+        st.error("FATAL: The `AttributeError: ... has no attribute 'input'` occurred as predicted.")
+        st.error("Please copy the DEBUG information above and share it for analysis.")
         return None
     finally:
         if os.path.exists(silent_video_path): os.remove(silent_video_path)
         if params.get('voiceover_path') and "temp_tts" in params['voiceover_path']: os.remove(params['voiceover_path'])
 
-    status_placeholder.empty()
-    return output_video_name
 
 # ================================ دوال الواجهة والتطبيق ==========================
 # (لا يوجد تغييرات هنا)
@@ -348,7 +364,7 @@ def main_app():
         st.error(f"خطأ فادح: ملف الخط '{FONT_FILE}' غير موجود. يرجى وضعه في نفس مجلد التطبيق.")
         return
     if not os.path.exists(DEFAULT_LOGO_FILE):
-        st.warning(f"تنبيه: ملف اللوجو الاftراضي '{DEFAULT_LOGO_FILE}' غير موجود. يمكنك رفع لوجو مخصص.")
+        st.warning(f"تنبيه: ملف اللوجو الافتراضي '{DEFAULT_LOGO_FILE}' غير موجود. يمكنك رفع لوجو مخصص.")
         
     st.header("1. إدخال المحتوى")
     input_method = st.radio("اختر طريقة الإدخال:", ("إدخال نص يدوي", "سحب البيانات من رابط"))
