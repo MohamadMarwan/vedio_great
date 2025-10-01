@@ -12,10 +12,8 @@ import requests
 from bs4 import BeautifulSoup
 from gtts import gTTS
 import time
-import sys # <--- استيراد مكتبة sys للوصول لمعلومات النظام
 
 # ================================ الإعدادات العامة =================================
-# (لا تغييرات هنا)
 FONT_FILE = "Amiri-Bold.ttf"
 DEFAULT_LOGO_FILE = "logo.png"
 TEXT_COLOR = "#FFFFFF"
@@ -40,7 +38,6 @@ FOOTER_TEXT = "تابعنا عبر موقع دليلك نيوز الإخباري
 # =================================================================================
 
 # ================================ دوال مساعدة (Helper Functions) ==================
-# (لا تغييرات هنا)
 def add_kashida(text):
     non_connecting_chars = {'ا', 'أ', 'إ', 'آ', 'د', 'ذ', 'ر', 'ز', 'و', 'ؤ', 'ة'}
     arabic_range = ('\u0600', '\u06FF'); result = []
@@ -115,7 +112,6 @@ def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, l
 # =================================================================================
 
 # ======================== الدوال الأساسية لإنشاء الفيديو ==========================
-# (لا يوجد تغييرات هنا)
 def create_video_frames(params, progress_bar):
     W, H = params['dimensions']
     news_title = params['text']
@@ -193,37 +189,13 @@ def create_video_frames(params, progress_bar):
     status_placeholder.empty()
     return silent_video_path, thumb_path
 
-# ====> التعديل التشخيصي <====
 def combine_media(params, silent_video_path):
-    try:
-        # 1. نقوم باستيراد المكتبة
-        import ffmpeg as ffmpeg_lib
-        
-        # 2. نقوم بطباعة معلومات تشخيصية عنها قبل استخدامها
-        st.warning("--- DEBUGGING FFMPEG MODULE ---")
-        # طباعة مسار الملف للمكتبة
-        if hasattr(ffmpeg_lib, '__file__'):
-            st.info(f"ffmpeg_lib.__file__: {ffmpeg_lib.__file__}")
-        else:
-            st.error("ffmpeg_lib has no __file__ attribute.")
-            
-        # طباعة محتويات المكتبة
-        st.info("Contents of ffmpeg_lib (dir):")
-        st.json(dir(ffmpeg_lib))
-        st.warning("--- END DEBUGGING ---")
+    import ffmpeg as ffmpeg_lib
 
-    except ImportError as e:
-        st.error(f"CRITICAL: Failed to import ffmpeg. Error: {e}")
-        return None
-    except Exception as e:
-        st.error(f"An unexpected error occurred during the debug phase: {e}")
-        return None
-
-    # 3. الآن نحاول تشغيل الكود الأصلي داخل try/except
+    status_placeholder = st.empty()
+    status_placeholder.info("⏳ جاري دمج الصوتيات ومقاطع الفيديو الإضافية...")
+    
     try:
-        status_placeholder = st.empty()
-        status_placeholder.info("⏳ جاري دمج الصوتيات ومقاطع الفيديو الإضافية...")
-        
         main_video = ffmpeg_lib.input(silent_video_path)
         video_parts = []
         audio_parts = []
@@ -277,18 +249,11 @@ def combine_media(params, silent_video_path):
         st.error(f"!! خطأ فادح أثناء دمج الفيديو بالصوت (ffmpeg):")
         st.code(e.stderr.decode() if e.stderr else 'Unknown Error')
         return None
-    except AttributeError:
-        # إذا حدث خطأ AttributeError المحدد، نعرض المعلومات التي جمعناها
-        st.error("FATAL: The `AttributeError: ... has no attribute 'input'` occurred as predicted.")
-        st.error("Please copy the DEBUG information above and share it for analysis.")
-        return None
     finally:
         if os.path.exists(silent_video_path): os.remove(silent_video_path)
         if params.get('voiceover_path') and "temp_tts" in params['voiceover_path']: os.remove(params['voiceover_path'])
 
-
 # ================================ دوال الواجهة والتطبيق ==========================
-# (لا يوجد تغييرات هنا)
 def login_page():
     st.title("تسجيل الدخول")
     st.write("الرجاء إدخال اسم المستخدم وكلمة المرور للوصول إلى الأداة.")
@@ -312,7 +277,7 @@ def scrape_article_page(url):
         soup = BeautifulSoup(response.content, 'html.parser')
         title_tag = soup.find('h1', class_='entry-title') or soup.find('h1')
         title = title_tag.get_text(strip=True) if title_tag else "لم يتم العثور على عنوان"
-        og_image_tag = soup.find('meta', property='og_image')
+        og_image_tag = soup.find('meta', property='og:image')
         image_url = og_image_tag['content'] if og_image_tag else None
         return {'title': title, 'image_url': image_url}
     except requests.RequestException as e:
