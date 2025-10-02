@@ -1,0 +1,5 @@
+ffmpeg
+libfreetype6-dev
+libharfbuzz-dev
+libfribidi-dev
+libraqm-dev
