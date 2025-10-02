@@ -1,8 +1,7 @@
 # app.py
 
 import streamlit as st
-# هام: هذه المكتبة مخصصة لجعل واجهة Streamlit نفسها (الأزرار، العناوين، إلخ) تدعم العربية
-from arabic_support import support_arabic_text
+# تم حذف استيراد مكتبة arabic_support الخارجية
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 # هام: هاتان المكتبتان هما أساس معالجة النصوص العربية للرسم على الصور
 import arabic_reshaper
@@ -21,6 +20,33 @@ import time
 # هام: هذه المكتبة تتطلب وجود برنامج ffmpeg مثبتاً على النظام.
 # لحل خطأ FileNotFoundError في Streamlit Cloud، يجب إنشاء ملف packages.txt يحتوي على كلمة 'ffmpeg'.
 import ffmpeg
+
+# ================================ الدالة الجديدة لدعم العربية =======================
+def apply_arabic_support():
+    """
+    Injects CSS to make Streamlit interface RTL and right-aligned for Arabic support.
+    هذه الدالة هي بديل لمكتبة arabic_support الخارجية.
+    """
+    css = """
+    <style>
+        /* General RTL for all main containers */
+        .stApp, .stSidebar, section[data-testid="stSidebar"], section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
+            direction: rtl;
+        }
+        /* Align specific components to the right */
+        .stMarkdown, .stButton>button, .stSelectbox, .stTextInput, .stTextArea,
+        .stAlert, .stRadio>div, .stHeadingWithActionElements, .stExpander>div:first-child, .stFileUploader,
+        .stDateInput, .stTimeInput, .stColorPicker, .stNumberInput, h1, h2, h3, h4, h5, h6 {
+            text-align: right !important;
+        }
+        /* Ensure input text is also right-aligned */
+        .stTextInput input, .stTextArea textarea, .stNumberInput input {
+            direction: rtl !important;
+            text-align: right !important;
+        }
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
 
 # ================================ الإعدادات العامة =================================
 # تأكد من وجود هذا الملف في نفس مجلد المشروع
@@ -202,7 +228,7 @@ def create_video_frames(params, progress_bar):
             words_to_show_count = min(num_words_on_page, int(seconds_on_page * params['words_per_second']) + 1)
             lines_to_draw_now = wrap_text_to_pages(" ".join(words_on_page[:words_to_show_count]), news_font, W-120, params['max_lines'])[0]
             render_design(design_type, draw, W, H, template, lines_to_draw_now, news_font, logo_img)
-            video_writer.write(cv2.cvtColor(np.array(frame_bg), cv2.COLOR_RGB_BGR))
+            video_writer.write(cv2.cvtColor(np.array(frame_bg), cv2.COLOR_RGB2BGR))
             global_frame_index += 1
             progress_bar.progress(global_frame_index / total_video_frames)
     status_placeholder.info("⏳ جاري إضافة الخاتمة...")
@@ -221,7 +247,7 @@ def create_video_frames(params, progress_bar):
             logo_pos_x = (W - current_size) // 2
             logo_pos_y = H//2 - (current_size//2) + 20
             image.paste(resized_logo, (logo_pos_x, logo_pos_y), resized_logo)
-        video_writer.write(cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB_BGR))
+        video_writer.write(cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB2BGR))
         global_frame_index += 1
         progress_bar.progress(min(1.0, global_frame_index / total_video_frames))
     video_writer.release()
@@ -473,7 +499,8 @@ def main_app():
 st.set_page_config(page_title="أداة إنشاء الفيديو الإخباري", layout="wide")
 
 # استدعاء دالة دعم واجهة Streamlit باللغة العربية
-support_arabic_text(all=True)
+# تم استبدال المكتبة الخارجية بالدالة الجديدة
+apply_arabic_support()
 
 # نظام تسجيل الدخول
 if "logged_in" not in st.session_state:
