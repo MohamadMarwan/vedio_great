@@ -1,4 +1,5 @@
 import streamlit as st
+from arabic_support import support_arabic_text
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 import arabic_reshaper
 from bidi.algorithm import get_display
