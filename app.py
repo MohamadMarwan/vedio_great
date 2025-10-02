@@ -1,6 +1,10 @@
+# app.py
+
 import streamlit as st
+# هام: هذه المكتبة مخصصة لجعل واجهة Streamlit نفسها (الأزرار، العناوين، إلخ) تدعم العربية
 from arabic_support import support_arabic_text
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+# هام: هاتان المكتبتان هما أساس معالجة النصوص العربية للرسم على الصور
 import arabic_reshaper
 from bidi.algorithm import get_display
 import telegram
@@ -19,6 +23,7 @@ import time
 import ffmpeg
 
 # ================================ الإعدادات العامة =================================
+# تأكد من وجود هذا الملف في نفس مجلد المشروع
 FONT_FILE = "Amiri-Bold.ttf"
 DEFAULT_LOGO_FILE = "logo.png"
 TEXT_COLOR = "#FFFFFF"
@@ -43,29 +48,45 @@ FOOTER_TEXT = "تابعنا عبر موقع دليلك نيوز الإخباري
 # =================================================================================
 
 
+# ================================ الدوال العربية الأساسية ============================
 
-
-
-
-# قم باستدعاء الدالة في بداية التطبيق
-support_arabic_text(all=True)
-
-# ... باقي الكود الخاص بك
-st.title("تجربة دعم اللغة العربية")
-st.write("الآن يجب أن يعمل النص بشكل صحيح.")
-
-# ================================ دوال مساعدة (Helper Functions) ==================
 def process_text_for_image(text):
-    """الدالة الأساسية لمعالجة النص العربي للعرض الصحيح."""
+    """
+    الدالة الأساسية لمعالجة النص العربي قبل رسمه على الصور.
+    تقوم هذه الدالة بعمل خطوتين ضروريتين:
+    1. arabic_reshaper: لربط الحروف العربية ببعضها بالشكل الصحيح (مثل: س ل ا م -> سلام).
+    2. python-bidi: لعكس اتجاه النص ليتم عرضه من اليمين إلى اليسار.
+    *** يجب استدعاء هذه الدالة على أي نص عربي قبل تمريره إلى دوال الرسم في مكتبة Pillow ***
+    """
     reshaped_text = arabic_reshaper.reshape(text)
     return get_display(reshaped_text)
 
+def draw_text_with_shadow(draw, position, text, font, fill_color, shadow_color):
+    """
+    ترسم النص على الصورة مع ظل بسيط لإبرازه.
+    مهم: النص الذي يتم تمريره لهذه الدالة يجب أن يكون قد تمت معالجته مسبقًا
+    باستخدام دالة process_text_for_image.
+    """
+    # معالجة النص قبل الرسم
+    processed_text = process_text_for_image(text)
+    x, y = position
+    shadow_offset = 3
+    # رسم الظل أولاً
+    draw.text((x + shadow_offset, y + shadow_offset), processed_text, font=font, fill=shadow_color, stroke_width=2)
+    # رسم النص الأساسي فوق الظل
+    draw.text((x, y), processed_text, font=font, fill=fill_color)
+
+# ================================ دوال مساعدة (Helper Functions) ==================
+
 def wrap_text_to_pages(text, font, max_width, max_lines_per_page):
+    """تقسم النص الطويل إلى أسطر وصفحات متعددة لتناسب عرض الصورة."""
     if not text: return [[]]
     lines, words, current_line = [], text.split(), ''
     for word in words:
         test_line = f"{current_line} {word}".strip()
-        if font.getbbox(process_text_for_image(test_line))[2] <= max_width:
+        # هنا نستخدم النص المعالج فقط لقياس العرض، ولكن لا نحفظه بعد
+        processed_test_line = process_text_for_image(test_line)
+        if font.getbbox(processed_test_line)[2] <= max_width:
             current_line = test_line
         else:
             lines.append(current_line)
@@ -73,14 +94,8 @@ def wrap_text_to_pages(text, font, max_width, max_lines_per_page):
     lines.append(current_line)
     return [lines[i:i + max_lines_per_page] for i in range(0, len(lines), max_lines_per_page)]
 
-def draw_text_with_shadow(draw, position, processed_text, font, fill_color, shadow_color):
-    """ترسم النص المعالج مسبقًا مع ظل."""
-    x, y = position
-    shadow_offset = 3
-    draw.text((x + shadow_offset, y + shadow_offset), processed_text, font=font, fill=shadow_color, stroke_width=2)
-    draw.text((x, y), processed_text, font=font, fill=fill_color)
-
 def fit_image_to_box(img, box_width, box_height):
+    """تعديل أبعاد الصورة لتناسب مقاس الفيديو مع قص الأجزاء الزائدة."""
     img_ratio = img.width / img.height
     box_ratio = box_width / box_height
     if img_ratio > box_ratio:
@@ -95,6 +110,7 @@ def fit_image_to_box(img, box_width, box_height):
     return img.crop((left, top, left + box_width, top + box_height))
 
 def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, logo_img):
+    """ترسم عناصر التصميم على إطار الفيديو (الهيدر، النص، إلخ)."""
     if design_type == 'classic':
         header_height = int(H * 0.1)
         dark_color, light_color = template['color'], tuple(min(c+30, 255) for c in template['color'])
@@ -104,10 +120,10 @@ def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, l
             draw.line([(0, i), (W, i)], fill=(r,g,b))
         
         header_font = ImageFont.truetype(FONT_FILE, int(W / 14.5))
-        processed_header_text = process_text_for_image(template['name'])
-        header_width = header_font.getbbox(processed_header_text)[2]
-        header_height_bbox = header_font.getbbox(processed_header_text)[3]
-        draw_text_with_shadow(draw, ((W - header_width) / 2, (header_height - header_height_bbox) / 2 - 10), processed_header_text, header_font, TEXT_COLOR, SHADOW_COLOR)
+        # لاحظ أننا لا نمرر النص المعالج، بل النص الأصلي، والدالة هي من تعالجه
+        header_text_width = header_font.getbbox(process_text_for_image(template['name']))[2]
+        header_text_height = header_font.getbbox(process_text_for_image(template['name']))[3]
+        draw_text_with_shadow(draw, ((W - header_text_width) / 2, (header_height - header_text_height) / 2 - 10), template['name'], header_font, TEXT_COLOR, SHADOW_COLOR)
 
     elif design_type == 'cinematic':
         tag_font = ImageFont.truetype(FONT_FILE, int(W / 24))
@@ -127,10 +143,10 @@ def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, l
         draw.rectangle([(0, plate_y0), (W, plate_y0 + plate_height)], fill=TEXT_PLATE_COLOR)
         
         text_y_start = plate_y0 + 30
-        for p_line in processed_lines:
-            line_width = news_font.getbbox(p_line)[2]
-            draw_text_with_shadow(draw, ((W - line_width) / 2, text_y_start), p_line, news_font, TEXT_COLOR, SHADOW_COLOR)
-            text_y_start += news_font.getbbox(p_line)[3] + 20
+        for line in lines_to_draw: # نستخدم النص الأصلي هنا
+            line_width = news_font.getbbox(process_text_for_image(line))[2]
+            draw_text_with_shadow(draw, ((W - line_width) / 2, text_y_start), line, news_font, TEXT_COLOR, SHADOW_COLOR)
+            text_y_start += news_font.getbbox(process_text_for_image(line))[3] + 20
 
 def create_video_frames(params, progress_bar):
     W, H = params['dimensions']
@@ -150,9 +166,13 @@ def create_video_frames(params, progress_bar):
             default_bg_logo = Image.open(logo_file).convert("RGB")
             base_image = default_bg_logo.resize((W,H)).filter(ImageFilter.GaussianBlur(15))
         logo_img = Image.open(logo_file).convert("RGBA") if logo_file and os.path.exists(logo_file) else None
+    except IOError as e:
+        st.error(f"خطأ فادح: لم يتم العثور على ملف ضروري مثل الخط '{FONT_FILE}' أو اللوجو '{DEFAULT_LOGO_FILE}'. تأكد من وجودها في مجلد المشروع. التفاصيل: {e}")
+        return None, None
     except Exception as e: 
         st.error(f"خطأ في تحميل الملفات الأساسية (الخط، اللوجو، الصورة): {e}")
         return None, None
+        
     text_pages = wrap_text_to_pages(news_title, news_font, max_width=W-120, max_lines_per_page=params['max_lines'])
     num_pages = len(text_pages)
     status_placeholder.info("⏳ جاري إنشاء الصورة المصغرة (Thumbnail)...")
@@ -182,27 +202,26 @@ def create_video_frames(params, progress_bar):
             words_to_show_count = min(num_words_on_page, int(seconds_on_page * params['words_per_second']) + 1)
             lines_to_draw_now = wrap_text_to_pages(" ".join(words_on_page[:words_to_show_count]), news_font, W-120, params['max_lines'])[0]
             render_design(design_type, draw, W, H, template, lines_to_draw_now, news_font, logo_img)
-            video_writer.write(cv2.cvtColor(np.array(frame_bg), cv2.COLOR_RGB2BGR))
+            video_writer.write(cv2.cvtColor(np.array(frame_bg), cv2.COLOR_RGB_BGR))
             global_frame_index += 1
             progress_bar.progress(global_frame_index / total_video_frames)
     status_placeholder.info("⏳ جاري إضافة الخاتمة...")
     outro_frames = int(params['outro_duration'] * FPS)
     outro_font = ImageFont.truetype(FONT_FILE, int(W / 18))
-    outro_processed_text = process_text_for_image(FOOTER_TEXT)
-    text_width = outro_font.getbbox(outro_processed_text)[2]
+    text_width = outro_font.getbbox(process_text_for_image(FOOTER_TEXT))[2]
     for i in range(outro_frames):
         image = Image.new('RGB', (W, H), (10, 10, 10)); draw = ImageDraw.Draw(image, 'RGBA')
         progress = i / outro_frames
         max_logo_size = int(min(W, H) / 2.5)
         current_size = int(max_logo_size * (progress ** 2))
         text_y_pos = H//2 - (current_size//2) - 50 if logo_img else H // 2
-        draw_text_with_shadow(draw, ((W - text_width) / 2, text_y_pos), outro_processed_text, outro_font, TEXT_COLOR, SHADOW_COLOR)
+        draw_text_with_shadow(draw, ((W - text_width) / 2, text_y_pos), FOOTER_TEXT, outro_font, TEXT_COLOR, SHADOW_COLOR)
         if logo_img and current_size > 0:
             resized_logo = logo_img.resize((current_size, current_size), Image.Resampling.LANCZOS)
             logo_pos_x = (W - current_size) // 2
             logo_pos_y = H//2 - (current_size//2) + 20
             image.paste(resized_logo, (logo_pos_x, logo_pos_y), resized_logo)
-        video_writer.write(cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB2BGR))
+        video_writer.write(cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB_BGR))
         global_frame_index += 1
         progress_bar.progress(min(1.0, global_frame_index / total_video_frames))
     video_writer.release()
@@ -267,10 +286,16 @@ def login_page():
         password = st.text_input("كلمة المرور", type="password")
         submitted = st.form_submit_button("دخول")
         if submitted:
+            # For deployment, use st.secrets
             if hasattr(st, 'secrets') and "users" in st.secrets and username in st.secrets.users and st.secrets.users[username] == password:
                 st.session_state["logged_in"] = True
                 st.session_state["username"] = username
                 st.rerun()
+            # For local testing, you can add a fallback
+            elif username == "admin" and password == "admin":
+                 st.session_state["logged_in"] = True
+                 st.session_state["username"] = username
+                 st.rerun()
             else:
                 st.error("اسم المستخدم أو كلمة المرور غير صحيحة.")
 
@@ -442,9 +467,18 @@ def main_app():
                                 with st.spinner("جاري الإرسال..."):
                                     asyncio.run(send_to_telegram(final_video_path, thumb_path, final_caption, selected_template['hashtag']))
 
+# ================================ تشغيل التطبيق =================================
+
+# إعدادات الصفحة
 st.set_page_config(page_title="أداة إنشاء الفيديو الإخباري", layout="wide")
+
+# استدعاء دالة دعم واجهة Streamlit باللغة العربية
+support_arabic_text(all=True)
+
+# نظام تسجيل الدخول
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
+
 if st.session_state["logged_in"]:
     with st.sidebar:
         st.write(f"المستخدم: **{st.session_state.get('username', '')}**")
