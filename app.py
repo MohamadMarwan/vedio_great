@@ -1,9 +1,7 @@
 # app.py
 
 import streamlit as st
-# تم حذف استيراد مكتبة arabic_support الخارجية
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
-# هام: هاتان المكتبتان هما أساس معالجة النصوص العربية للرسم على الصور
 import arabic_reshaper
 from bidi.algorithm import get_display
 import telegram
@@ -16,30 +14,23 @@ import requests
 from bs4 import BeautifulSoup
 from gtts import gTTS
 import time
-
-# هام: هذه المكتبة تتطلب وجود برنامج ffmpeg مثبتاً على النظام.
-# لحل خطأ FileNotFoundError في Streamlit Cloud، يجب إنشاء ملف packages.txt يحتوي على كلمة 'ffmpeg'.
 import ffmpeg
 
-# ================================ الدالة الجديدة لدعم العربية =======================
+# ================================ الدالة الجديدة لدعم واجهة Streamlit =================
 def apply_arabic_support():
     """
     Injects CSS to make Streamlit interface RTL and right-aligned for Arabic support.
-    هذه الدالة هي بديل لمكتبة arabic_support الخارجية.
     """
     css = """
     <style>
-        /* General RTL for all main containers */
         .stApp, .stSidebar, section[data-testid="stSidebar"], section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
             direction: rtl;
         }
-        /* Align specific components to the right */
         .stMarkdown, .stButton>button, .stSelectbox, .stTextInput, .stTextArea,
         .stAlert, .stRadio>div, .stHeadingWithActionElements, .stExpander>div:first-child, .stFileUploader,
         .stDateInput, .stTimeInput, .stColorPicker, .stNumberInput, h1, h2, h3, h4, h5, h6 {
             text-align: right !important;
         }
-        /* Ensure input text is also right-aligned */
         .stTextInput input, .stTextArea textarea, .stNumberInput input {
             direction: rtl !important;
             text-align: right !important;
@@ -49,8 +40,8 @@ def apply_arabic_support():
     st.markdown(css, unsafe_allow_html=True)
 
 # ================================ الإعدادات العامة =================================
-# تأكد من وجود هذا الملف في نفس مجلد المشروع
-FONT_FILE = "Amiri-Bold.ttf"
+# الحل الأول: تغيير الخط إلى خط أكثر توافقية
+FONT_FILE = "NotoNaskhArabicUI-Bold.ttf"
 DEFAULT_LOGO_FILE = "logo.png"
 TEXT_COLOR = "#FFFFFF"
 SHADOW_COLOR = "#000000"
@@ -77,42 +68,29 @@ FOOTER_TEXT = "تابعنا عبر موقع دليلك نيوز الإخباري
 # ================================ الدوال العربية الأساسية ============================
 
 def process_text_for_image(text):
-    """
-    الدالة الأساسية لمعالجة النص العربي قبل رسمه على الصور.
-    تقوم هذه الدالة بعمل خطوتين ضروريتين:
-    1. arabic_reshaper: لربط الحروف العربية ببعضها بالشكل الصحيح (مثل: س ل ا م -> سلام).
-    2. python-bidi: لعكس اتجاه النص ليتم عرضه من اليمين إلى اليسار.
-    *** يجب استدعاء هذه الدالة على أي نص عربي قبل تمريره إلى دوال الرسم في مكتبة Pillow ***
-    """
     reshaped_text = arabic_reshaper.reshape(text)
     return get_display(reshaped_text)
 
+# الحل الثاني: تحسين دالة الرسم باستخدام ميزة تحديد اللغة في Pillow
 def draw_text_with_shadow(draw, position, text, font, fill_color, shadow_color):
-    """
-    ترسم النص على الصورة مع ظل بسيط لإبرازه.
-    مهم: النص الذي يتم تمريره لهذه الدالة يجب أن يكون قد تمت معالجته مسبقًا
-    باستخدام دالة process_text_for_image.
-    """
-    # معالجة النص قبل الرسم
     processed_text = process_text_for_image(text)
     x, y = position
     shadow_offset = 3
     # رسم الظل أولاً
-    draw.text((x + shadow_offset, y + shadow_offset), processed_text, font=font, fill=shadow_color, stroke_width=2)
+    draw.text((x + shadow_offset, y + shadow_offset), processed_text, font=font, fill=shadow_color, stroke_width=2, language='ar')
     # رسم النص الأساسي فوق الظل
-    draw.text((x, y), processed_text, font=font, fill=fill_color)
+    draw.text((x, y), processed_text, font=font, fill=fill_color, language='ar')
 
 # ================================ دوال مساعدة (Helper Functions) ==================
 
 def wrap_text_to_pages(text, font, max_width, max_lines_per_page):
-    """تقسم النص الطويل إلى أسطر وصفحات متعددة لتناسب عرض الصورة."""
     if not text: return [[]]
     lines, words, current_line = [], text.split(), ''
     for word in words:
         test_line = f"{current_line} {word}".strip()
-        # هنا نستخدم النص المعالج فقط لقياس العرض، ولكن لا نحفظه بعد
         processed_test_line = process_text_for_image(test_line)
-        if font.getbbox(processed_test_line)[2] <= max_width:
+        # استخدام الطريقة الجديدة لقياس النص لضمان الدقة
+        if font.getlength(processed_test_line, language='ar') <= max_width:
             current_line = test_line
         else:
             lines.append(current_line)
@@ -121,7 +99,6 @@ def wrap_text_to_pages(text, font, max_width, max_lines_per_page):
     return [lines[i:i + max_lines_per_page] for i in range(0, len(lines), max_lines_per_page)]
 
 def fit_image_to_box(img, box_width, box_height):
-    """تعديل أبعاد الصورة لتناسب مقاس الفيديو مع قص الأجزاء الزائدة."""
     img_ratio = img.width / img.height
     box_ratio = box_width / box_height
     if img_ratio > box_ratio:
@@ -136,7 +113,6 @@ def fit_image_to_box(img, box_width, box_height):
     return img.crop((left, top, left + box_width, top + box_height))
 
 def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, logo_img):
-    """ترسم عناصر التصميم على إطار الفيديو (الهيدر، النص، إلخ)."""
     if design_type == 'classic':
         header_height = int(H * 0.1)
         dark_color, light_color = template['color'], tuple(min(c+30, 255) for c in template['color'])
@@ -146,33 +122,32 @@ def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, l
             draw.line([(0, i), (W, i)], fill=(r,g,b))
         
         header_font = ImageFont.truetype(FONT_FILE, int(W / 14.5))
-        # لاحظ أننا لا نمرر النص المعالج، بل النص الأصلي، والدالة هي من تعالجه
-        header_text_width = header_font.getbbox(process_text_for_image(template['name']))[2]
-        header_text_height = header_font.getbbox(process_text_for_image(template['name']))[3]
-        draw_text_with_shadow(draw, ((W - header_text_width) / 2, (header_height - header_text_height) / 2 - 10), template['name'], header_font, TEXT_COLOR, SHADOW_COLOR)
+        header_text_width = header_font.getlength(process_text_for_image(template['name']), language='ar')
+        # Pillow's getbbox can sometimes be inconsistent, using a simple height approximation
+        header_text_height = header_font.getbbox("A")[3] 
+        draw_text_with_shadow(draw, ((W - header_text_width) / 2, (header_height - header_text_height) / 1.5), template['name'], header_font, TEXT_COLOR, SHADOW_COLOR)
 
     elif design_type == 'cinematic':
         tag_font = ImageFont.truetype(FONT_FILE, int(W / 24))
         tag_text_processed = process_text_for_image(template['name'])
-        tag_bbox = tag_font.getbbox(tag_text_processed)
+        tag_bbox = tag_font.getbbox(tag_text_processed, language='ar')
         tag_width = tag_bbox[2] - tag_bbox[0] + 60
         tag_height = tag_bbox[3] - tag_bbox[1] + 30
         tag_x, tag_y = W - tag_width - 40, 40
         draw.rounded_rectangle([tag_x, tag_y, tag_x + tag_width, tag_y + tag_height], radius=tag_height/2, fill=template['color'])
-        draw.text((tag_x + tag_width/2, tag_y + tag_height/2), tag_text_processed, font=tag_font, fill=TEXT_COLOR, anchor="mm")
+        draw.text((tag_x + tag_width/2, tag_y + tag_height/2), tag_text_processed, font=tag_font, fill=TEXT_COLOR, anchor="mm", language='ar')
 
     if lines_to_draw:
-        processed_lines = [process_text_for_image(line) for line in lines_to_draw]
-        line_heights = [news_font.getbbox(p_line)[3] + 20 for p_line in processed_lines]
+        line_heights = [news_font.getbbox(process_text_for_image(line), language='ar')[3] + 20 for line in lines_to_draw]
         plate_height = sum(line_heights) + 60
         plate_y0 = (H - plate_height) / 2
         draw.rectangle([(0, plate_y0), (W, plate_y0 + plate_height)], fill=TEXT_PLATE_COLOR)
         
         text_y_start = plate_y0 + 30
-        for line in lines_to_draw: # نستخدم النص الأصلي هنا
-            line_width = news_font.getbbox(process_text_for_image(line))[2]
+        for line in lines_to_draw:
+            line_width = news_font.getlength(process_text_for_image(line), language='ar')
             draw_text_with_shadow(draw, ((W - line_width) / 2, text_y_start), line, news_font, TEXT_COLOR, SHADOW_COLOR)
-            text_y_start += news_font.getbbox(process_text_for_image(line))[3] + 20
+            text_y_start += news_font.getbbox(process_text_for_image(line), language='ar')[3] + 20
 
 def create_video_frames(params, progress_bar):
     W, H = params['dimensions']
@@ -234,7 +209,7 @@ def create_video_frames(params, progress_bar):
     status_placeholder.info("⏳ جاري إضافة الخاتمة...")
     outro_frames = int(params['outro_duration'] * FPS)
     outro_font = ImageFont.truetype(FONT_FILE, int(W / 18))
-    text_width = outro_font.getbbox(process_text_for_image(FOOTER_TEXT))[2]
+    text_width = outro_font.getlength(process_text_for_image(FOOTER_TEXT), language='ar')
     for i in range(outro_frames):
         image = Image.new('RGB', (W, H), (10, 10, 10)); draw = ImageDraw.Draw(image, 'RGBA')
         progress = i / outro_frames
@@ -254,6 +229,7 @@ def create_video_frames(params, progress_bar):
     status_placeholder.empty()
     return silent_video_path, thumb_path
 
+# ... (باقي الدوال مثل combine_media, login_page, etc. تبقى كما هي بدون تغيير)
 def combine_media(params, silent_video_path):
     status_placeholder = st.empty()
     status_placeholder.info("⏳ جاري دمج الصوتيات ومقاطع الفيديو الإضافية...")
@@ -382,7 +358,7 @@ def main_app():
     st.markdown(f"مرحباً بك **{st.session_state['username']}**! استخدم هذه الواجهة لإنشاء فيديوهات إخبارية بسهولة.")
     
     if not os.path.exists(FONT_FILE):
-        st.error(f"خطأ فادح: ملف الخط '{FONT_FILE}' غير موجود. يرجى وضعه في نفس مجلد التطبيق.")
+        st.error(f"خطأ فادح: ملف الخط '{FONT_FILE}' غير موجود. يرجى تحميله ووضعه في نفس مجلد التطبيق.")
         return
     if not os.path.exists(DEFAULT_LOGO_FILE):
         st.warning(f"تنبيه: ملف اللوجو الافتراضي '{DEFAULT_LOGO_FILE}' غير موجود. يمكنك رفع لوجو مخصص.")
@@ -499,7 +475,6 @@ def main_app():
 st.set_page_config(page_title="أداة إنشاء الفيديو الإخباري", layout="wide")
 
 # استدعاء دالة دعم واجهة Streamlit باللغة العربية
-# تم استبدال المكتبة الخارجية بالدالة الجديدة
 apply_arabic_support()
 
 # نظام تسجيل الدخول
