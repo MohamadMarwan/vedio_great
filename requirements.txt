@@ -1,4 +1,5 @@
 streamlit
+streamlit-arabic-support-wrapper
 Pillow
 arabic-reshaper
 python-bidi
