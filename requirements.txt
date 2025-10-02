@@ -1,6 +1,5 @@
 streamlit
 Pillow
-arabic-reshaper
 python-bidi
 python-telegram-bot
 opencv-python-headless
